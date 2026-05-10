@@ -70,6 +70,11 @@ namespace NBA2k16_Trainer
 
         private int? _attachedPid;
         private IntPtr _lastPlayerBase = IntPtr.Zero;
+        // All discovered copies of the active MyPlayer struct in process memory.
+        // Cheats write to every copy so save-reads pick up the edit regardless
+        // of which copy the save serializer pulls from. Always contains the
+        // active copy as element 0; refreshed when the active ptr changes.
+        private IReadOnlyList<IntPtr> _playerCopies = Array.Empty<IntPtr>();
         private bool _profileLoaded;       // probe completed at least once
         private bool _hookInstalled;
         private bool _suppressToggleEvent;
@@ -640,6 +645,7 @@ namespace NBA2k16_Trainer
             _hookInstalled = false;
             _profileLoaded = false;
             _lastPlayerBase = IntPtr.Zero;
+            _playerCopies = Array.Empty<IntPtr>();
             _liveMaxLabel.Text = "Live: —";
             _liveMinLabel.Text = "Live: —";
             _liveProfileLabel.Text = "Live: —";
@@ -661,11 +667,23 @@ namespace NBA2k16_Trainer
                 IntPtr p = _resolver.ReadPlayerPointer(session);
                 if (p == IntPtr.Zero) return;
 
+                bool ptrChanged = _lastPlayerBase != p;
                 _lastPlayerBase = p;
 
                 try
                 {
                     var profile = _profileCheat.Probe(session, p);
+
+                    // Discover all parallel copies of this MyPlayer struct so
+                    // writes survive save/load (game saves from a different
+                    // copy than the live in-game one). Re-scan only when the
+                    // active pointer moves — otherwise the list is stable.
+                    if (ptrChanged || _playerCopies.Count == 0)
+                    {
+                        _playerCopies = PlayerStructScanner.FindCopies(session, p);
+                        Log($"Scanned for player copies: {_playerCopies.Count} found.");
+                    }
+
                     PopulateProfileInputs(profile);
                     _liveProfileLabel.Text = $"Live: {profile.FirstName} {profile.LastName} · "
                         + $"{PositionNames.Format(profile.PrimaryPosition)} #{profile.Jersey} · "
@@ -679,19 +697,21 @@ namespace NBA2k16_Trainer
                     UpdateStatusLabel();
                     Log($"Player resolved: {profile.FirstName} {profile.LastName} (struct @ 0x{p.ToInt64():X}).");
 
-                    // Auto-apply if persisted settings exist.
+                    // Auto-apply if persisted settings exist. Writes are
+                    // fanned across every discovered struct copy so they
+                    // survive save/load.
                     if (_settings.AutoApplyProfile && SettingsHasProfile())
                     {
                         var desired = MergeProfileFromSettings(profile);
-                        _profileCheat.Apply(session, p, desired);
-                        Log("Auto-applied saved profile.");
+                        int ok = ApplyToCopies(c => _profileCheat.Apply(session, c, desired));
+                        Log($"Auto-applied saved profile to {ok}/{_playerCopies.Count} copies.");
                     }
                     if (_settings.AutoApplyRatings && _settings.RatingOverrides is { Count: > 0 })
                     {
                         var desired = new Dictionary<string, byte>(ratings);
                         foreach (var kv in _settings.RatingOverrides!) desired[kv.Key] = kv.Value;
-                        _ratingsCheat.Apply(session, p, desired);
-                        Log("Auto-applied saved rating overrides.");
+                        int ok = ApplyToCopies(c => _ratingsCheat.Apply(session, c, desired));
+                        Log($"Auto-applied saved rating overrides to {ok}/{_playerCopies.Count} copies.");
                     }
                 }
                 catch (Exception ex)
@@ -833,9 +853,9 @@ namespace NBA2k16_Trainer
                 try
                 {
                     var desired = ReadProfileFromInputs();
-                    _profileCheat.Apply(session, _lastPlayerBase, desired);
+                    int okProfile = ApplyToCopies(c => _profileCheat.Apply(session, c, desired));
                     PersistProfileToSettings(desired);
-                    Log($"Profile written: {desired.FirstName} {desired.LastName} · "
+                    Log($"Profile written ({okProfile}/{_playerCopies.Count} copies): {desired.FirstName} {desired.LastName} · "
                         + $"{PositionNames.Format(desired.PrimaryPosition)}/{PositionNames.Format(desired.SecondaryPosition)} · "
                         + $"#{desired.Jersey} · {desired.Height:F2}cm / {desired.Wingspan:F2}cm wing / {desired.Weight:F2}lbs.");
 
@@ -860,9 +880,9 @@ namespace NBA2k16_Trainer
             {
                 try
                 {
-                    _profileCheat.Revert(session, _lastPlayerBase);
+                    int okRevert = ApplyToCopies(c => _profileCheat.Revert(session, c));
                     if (_profileCheat.Original is { } original) PopulateProfileInputs(original);
-                    Log("Profile reverted to attach-time values.");
+                    Log($"Profile reverted on {okRevert}/{_playerCopies.Count} copies.");
                 }
                 catch (Exception ex)
                 {
@@ -884,7 +904,7 @@ namespace NBA2k16_Trainer
                 try
                 {
                     var desired = ReadRatingsFromInputs();
-                    _ratingsCheat.Apply(session, _lastPlayerBase, desired);
+                    int okRatings = ApplyToCopies(c => _ratingsCheat.Apply(session, c, desired));
 
                     // Persist only the entries that differ from "Original" (so we don't
                     // pin every rating across sessions).
@@ -894,7 +914,7 @@ namespace NBA2k16_Trainer
                         : desired;
                     _settings.RatingOverrides = overrides.Count > 0 ? overrides : null;
                     _settings.Save();
-                    Log($"Ratings written ({overrides.Count} overrides). Reload the save to lock in.");
+                    Log($"Ratings written ({overrides.Count} overrides, {okRatings}/{_playerCopies.Count} copies). Reload the save to lock in.");
                 }
                 catch (Exception ex)
                 {
@@ -911,9 +931,9 @@ namespace NBA2k16_Trainer
             {
                 try
                 {
-                    _ratingsCheat.Revert(session, _lastPlayerBase);
+                    int okRatingsRevert = ApplyToCopies(c => _ratingsCheat.Revert(session, c));
                     if (_ratingsCheat.Original is { } original) PopulateRatingInputs(original);
-                    Log("Ratings reverted to attach-time values.");
+                    Log($"Ratings reverted on {okRatingsRevert}/{_playerCopies.Count} copies.");
                 }
                 catch (Exception ex)
                 {
@@ -925,6 +945,35 @@ namespace NBA2k16_Trainer
         private void FillAllRatings(byte v)
         {
             foreach (var box in _ratingBoxes.Values) box.Value = v;
+        }
+
+        /// <summary>
+        /// Runs <paramref name="action"/> against every discovered player copy,
+        /// swallowing per-copy exceptions so one bad address doesn't abort
+        /// the rest. Returns the number of copies the action ran cleanly on.
+        ///
+        /// The scanner is best-effort by design — a stale or memory-mapped
+        /// region can occasionally pass the heuristic checks and survive into
+        /// <see cref="_playerCopies"/>. Treating each copy independently means
+        /// the writes that matter (the 2-3 real MyPlayer copies) still happen
+        /// even if a phantom entry has an unmapped address.
+        /// </summary>
+        private int ApplyToCopies(Action<IntPtr> action)
+        {
+            int ok = 0;
+            foreach (var copy in _playerCopies)
+            {
+                try
+                {
+                    action(copy);
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    Log($"  Skipped copy 0x{copy.ToInt64():X}: {ex.Message}");
+                }
+            }
+            return ok;
         }
 
         // ─── Glue: settings ↔ inputs ────────────────────────────────────────

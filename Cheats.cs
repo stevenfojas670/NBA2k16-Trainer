@@ -5,6 +5,49 @@ using System.Linq;
 namespace NBA2k16_Trainer
 {
     /// <summary>
+    /// Buckets cheats by purpose so the UI can render one tab per category.
+    /// </summary>
+    internal enum CheatCategory
+    {
+        MyPlayer,
+        Roster,
+        Trades,
+        MatchState,
+        Sliders,
+        MyCareer,
+        GameplayPatch,
+        Cosmetic,
+        CapRemoval,
+        QoL,
+    }
+
+    /// <summary>
+    /// Shape of the value a cheat exposes to the UI. Drives editor choice
+    /// (checkbox vs. spinbox vs. dropdown).
+    /// </summary>
+    internal enum CheatValueType
+    {
+        Toggle,
+        Float,
+        Int,
+        Byte,
+        String,
+        Enum,
+    }
+
+    /// <summary>
+    /// Whose state a cheat mutates. <see cref="Global"/> is a process-wide
+    /// patch (code or shared data); the player-scoped values are reserved for
+    /// the multi-resolver work in Phase 3.
+    /// </summary>
+    internal enum CheatScope
+    {
+        Global,
+        MyPlayer,
+        RosterPlayer,
+    }
+
+    /// <summary>
     /// Base class for any patch the trainer applies. Cheats hold their own state
     /// (enabled flag, captured original bytes) so the form can revert in place.
     /// </summary>
@@ -12,12 +55,23 @@ namespace NBA2k16_Trainer
     {
         public string Name { get; }
         public string Description { get; }
+        public CheatCategory Category { get; }
+        public CheatValueType ValueType { get; }
+        public CheatScope Scope { get; }
         public bool Enabled { get; protected set; }
 
-        protected Cheat(string name, string description)
+        protected Cheat(
+            string name,
+            string description,
+            CheatCategory category = CheatCategory.MyPlayer,
+            CheatValueType valueType = CheatValueType.Toggle,
+            CheatScope scope = CheatScope.Global)
         {
             Name = name;
             Description = description;
+            Category = category;
+            ValueType = valueType;
+            Scope = scope;
         }
 
         /// <summary>Write the patch to the live process.</summary>
@@ -42,8 +96,15 @@ namespace NBA2k16_Trainer
         public float DesiredValue { get; set; }
         public float? LiveValue { get; private set; }
 
-        public FloatConstantCheat(string name, string description, long offset, float defaultValue, float desired)
-            : base(name, description)
+        public FloatConstantCheat(
+            string name,
+            string description,
+            long offset,
+            float defaultValue,
+            float desired,
+            CheatCategory category = CheatCategory.MyPlayer,
+            CheatScope scope = CheatScope.Global)
+            : base(name, description, category, CheatValueType.Float, scope)
         {
             Offset = offset;
             DefaultValue = defaultValue;
@@ -84,7 +145,17 @@ namespace NBA2k16_Trainer
         public IReadOnlyList<PatchSite> Sites { get; }
 
         public BytePatchCheat(string name, string description, params PatchSite[] sites)
-            : base(name, description)
+            : this(name, description, CheatCategory.MyPlayer, CheatScope.Global, sites)
+        {
+        }
+
+        public BytePatchCheat(
+            string name,
+            string description,
+            CheatCategory category,
+            CheatScope scope,
+            params PatchSite[] sites)
+            : base(name, description, category, CheatValueType.Toggle, scope)
         {
             if (sites.Length == 0)
                 throw new ArgumentException("BytePatchCheat needs at least one site.", nameof(sites));
@@ -216,7 +287,12 @@ namespace NBA2k16_Trainer
         public const int PLAYER_PHYS_ATTRS_PTR  = 0x80;   // qword → sub-buffer
         public const int PLAYER_POSITION_DWORD  = 0xC8;   // u32; pos in bits 8..13
         public const int PLAYER_HANDEDNESS     = 0xCA;    // u8 bitfield
-        public const int PLAYER_ATTRIBUTE_PTR_OFFSET = 0x388; // ratings table
+        // Live in-memory ratings table. Phase-1 documented this as 0x388 but
+        // that block is a 41-byte 0xFF prefix (uninitialized template / save
+        // buffer); the actual byte-per-attribute table the game continuously
+        // rebuilds lives at +0x3C4. Verified 2026-05 via CE BP + memory scan
+        // against Mike Jones's MyPlayer struct.
+        public const int PLAYER_ATTRIBUTE_PTR_OFFSET = 0x3C4; // ratings table
         public const int PLAYER_BADGE_PTR_OFFSET     = 0x419; // badges bitfield
 
         // Sub-buffer (referenced by [player + 0x80])
