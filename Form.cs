@@ -24,6 +24,7 @@ namespace NBA2k16_Trainer
         private TabControl _tabs = null!;
         private TextBox _logBox = null!;
         private Button _clearLogBtn = null!;
+        private Button _copyLogBtn = null!;
         private System.Windows.Forms.Timer _attachTimer = null!;
 
         // Heights tab
@@ -155,6 +156,13 @@ namespace NBA2k16_Trainer
             _clearLogBtn.Click += (_, _) => _logBox.Clear();
             logGroup.Controls.Add(_clearLogBtn);
 
+            _copyLogBtn = new Button
+            {
+                Text = "Copy last 20", Top = 156, Left = 120, Width = 110, Height = 24,
+            };
+            _copyLogBtn.Click += (_, _) => CopyRecentLog(20);
+            logGroup.Controls.Add(_copyLogBtn);
+
             _attachTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _attachTimer.Tick += (_, _) => OnTimerTick();
 
@@ -273,7 +281,7 @@ namespace NBA2k16_Trainer
             _jerseyBox = new NumericUpDown
             {
                 Top = 25, Left = 385, Width = 70,
-                Minimum = 0, Maximum = 99, Value = 0,
+                Minimum = 0, Maximum = 255, Value = 0,
             };
             idBox.Controls.Add(_jerseyBox);
 
@@ -927,10 +935,10 @@ namespace NBA2k16_Trainer
             _lastNameBox.Text = snap.LastName;
             _primaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.PrimaryPosition);
             _secondaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.SecondaryPosition);
-            _jerseyBox.Value = snap.Jersey;
-            _weightBox.Value = (decimal)Math.Clamp(snap.Weight, (float)_weightBox.Minimum, (float)_weightBox.Maximum);
-            _heightBox.Value = (decimal)Math.Clamp(snap.Height, (float)_heightBox.Minimum, (float)_heightBox.Maximum);
-            _wingspanBox.Value = (decimal)Math.Clamp(snap.Wingspan, (float)_wingspanBox.Minimum, (float)_wingspanBox.Maximum);
+            _jerseyBox.Value = Math.Clamp((decimal)snap.Jersey, _jerseyBox.Minimum, _jerseyBox.Maximum);
+            _weightBox.Value = Math.Clamp((decimal)snap.Weight, _weightBox.Minimum, _weightBox.Maximum);
+            _heightBox.Value = Math.Clamp((decimal)snap.Height, _heightBox.Minimum, _heightBox.Maximum);
+            _wingspanBox.Value = Math.Clamp((decimal)snap.Wingspan, _wingspanBox.Minimum, _wingspanBox.Maximum);
         }
 
         private void PopulateRatingInputs(Dictionary<string, byte> values)
@@ -938,7 +946,7 @@ namespace NBA2k16_Trainer
             foreach (var kv in values)
             {
                 if (_ratingBoxes.TryGetValue(kv.Key, out var box))
-                    box.Value = kv.Value;
+                    box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
             }
         }
 
@@ -1065,6 +1073,28 @@ namespace NBA2k16_Trainer
             string line = $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
             if (_logBox.IsHandleCreated) _logBox.AppendText(line);
             else _logBox.Text += line;
+        }
+
+        private void CopyRecentLog(int n)
+        {
+            var lines = _logBox.Text
+                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length == 0)
+            {
+                Log("No log lines to copy.");
+                return;
+            }
+            var tail = lines.Skip(Math.Max(0, lines.Length - n));
+            string payload = string.Join(Environment.NewLine, tail);
+            try
+            {
+                Clipboard.SetText(payload);
+                Log($"Copied last {Math.Min(n, lines.Length)} log line(s) to clipboard.");
+            }
+            catch (Exception ex)
+            {
+                Log("Clipboard copy failed: " + ex.Message);
+            }
         }
 
         private static bool ShowDisclaimer()
