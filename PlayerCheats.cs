@@ -20,16 +20,12 @@ namespace NBA2k16_Trainer
 
     /// <summary>
     /// Reads/writes the player identity + body block (name, position, jersey,
-    /// weight, height, wingspan). Captures the live values as "Original" the
-    /// first time it's probed so Revert can put them back.
+    /// weight, height, wingspan). Lifecycle (probe/apply/revert/reset) lives in
+    /// <see cref="PlayerCheatBase{TSnapshot}"/>.
     /// </summary>
-    internal sealed class PlayerProfileCheat
+    internal sealed class PlayerProfileCheat : PlayerCheatBase<PlayerProfileSnapshot>
     {
-        public PlayerProfileSnapshot? Original { get; private set; }
-        public PlayerProfileSnapshot? Live { get; private set; }
-        public bool Applied { get; private set; }
-
-        public PlayerProfileSnapshot Read(ProcessSession s, IntPtr p)
+        public override PlayerProfileSnapshot Read(ProcessSession s, IntPtr p)
         {
             var (primary, secondary) = PlayerStructIO.ReadPositions(s, p);
             return new PlayerProfileSnapshot(
@@ -43,39 +39,7 @@ namespace NBA2k16_Trainer
                 Wingspan: PlayerStructIO.ReadIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_WINGSPAN));
         }
 
-        /// <summary>Reads current values into <see cref="Live"/>. Captures <see cref="Original"/> once.</summary>
-        public PlayerProfileSnapshot Probe(ProcessSession s, IntPtr p)
-        {
-            Live = Read(s, p);
-            Original ??= Live;
-            return Live;
-        }
-
-        public void Apply(ProcessSession s, IntPtr p, PlayerProfileSnapshot desired)
-        {
-            // Make sure Original is captured before any write.
-            if (Original is null) Probe(s, p);
-            WriteAll(s, p, desired);
-            Live = desired;
-            Applied = true;
-        }
-
-        public void Revert(ProcessSession s, IntPtr p)
-        {
-            if (Original is null) return;
-            WriteAll(s, p, Original);
-            Live = Original;
-            Applied = false;
-        }
-
-        public void ResetCapturedState()
-        {
-            Original = null;
-            Live = null;
-            Applied = false;
-        }
-
-        private static void WriteAll(ProcessSession s, IntPtr p, PlayerProfileSnapshot v)
+        protected override void Write(ProcessSession s, IntPtr p, PlayerProfileSnapshot v)
         {
             PlayerStructIO.WriteName(s, p, GameOffsets.PLAYER_FIRST_NAME, GameOffsets.PLAYER_FIRST_NAME_BYTES, v.FirstName);
             PlayerStructIO.WriteName(s, p, GameOffsets.PLAYER_LAST_NAME, GameOffsets.PLAYER_LAST_NAME_BYTES, v.LastName);
@@ -93,9 +57,10 @@ namespace NBA2k16_Trainer
     /// <summary>
     /// Reads/writes the 41 byte-sized ratings the CT table maps. Each value is
     /// a 25-99 (NBA scale) byte; writes outside that range are accepted but the
-    /// game may clamp internally.
+    /// game may clamp internally. Lifecycle lives in
+    /// <see cref="PlayerCheatBase{TSnapshot}"/>.
     /// </summary>
-    internal sealed class RatingsCheat
+    internal sealed class RatingsCheat : PlayerCheatBase<Dictionary<string, byte>>
     {
         // Offsets verified from NBA2k16.ct records 5192..5241 (AttributePtr-relative).
         public static readonly RatingDef[] Ratings = new[]
@@ -158,11 +123,7 @@ namespace NBA2k16_Trainer
             new RatingDef("Potential",              0x2B, "Other"),
         };
 
-        public Dictionary<string, byte>? Original { get; private set; }
-        public Dictionary<string, byte>? Live { get; private set; }
-        public bool Applied { get; private set; }
-
-        public Dictionary<string, byte> Read(ProcessSession s, IntPtr p)
+        public override Dictionary<string, byte> Read(ProcessSession s, IntPtr p)
         {
             IntPtr attrBase = PlayerStructIO.AttributeBase(p);
             var dict = new Dictionary<string, byte>(Ratings.Length);
@@ -171,45 +132,20 @@ namespace NBA2k16_Trainer
             return dict;
         }
 
-        public Dictionary<string, byte> Probe(ProcessSession s, IntPtr p)
+        protected override void Write(ProcessSession s, IntPtr p, Dictionary<string, byte> values)
         {
-            Live = Read(s, p);
-            Original ??= new Dictionary<string, byte>(Live);
-            return Live;
-        }
-
-        public void Apply(ProcessSession s, IntPtr p, Dictionary<string, byte> desired)
-        {
-            if (Original is null) Probe(s, p);
             IntPtr attrBase = PlayerStructIO.AttributeBase(p);
             foreach (var r in Ratings)
             {
-                if (!desired.TryGetValue(r.Name, out byte v)) continue;
+                if (!values.TryGetValue(r.Name, out byte v)) continue;
                 s.WriteByte(new IntPtr(attrBase.ToInt64() + r.Offset), v);
             }
-            Live = new Dictionary<string, byte>(desired);
-            Applied = true;
         }
 
-        public void Revert(ProcessSession s, IntPtr p)
-        {
-            if (Original is null) return;
-            IntPtr attrBase = PlayerStructIO.AttributeBase(p);
-            foreach (var r in Ratings)
-            {
-                if (!Original.TryGetValue(r.Name, out byte v)) continue;
-                s.WriteByte(new IntPtr(attrBase.ToInt64() + r.Offset), v);
-            }
-            Live = new Dictionary<string, byte>(Original);
-            Applied = false;
-        }
-
-        public void ResetCapturedState()
-        {
-            Original = null;
-            Live = null;
-            Applied = false;
-        }
+        // Dict is mutable; hand back a defensive copy so callers can't poke our
+        // captured Original/Live behind our back.
+        protected override Dictionary<string, byte> Clone(Dictionary<string, byte> value) =>
+            new Dictionary<string, byte>(value);
     }
 
     /// <summary>
