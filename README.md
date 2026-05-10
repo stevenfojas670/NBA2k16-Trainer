@@ -57,24 +57,43 @@ online modes remain explicitly out of scope — see disclaimer above.
 
 ## Tooling
 
-The trainer is built using a small Claude-Code-driven reverse-engineering loop:
+The trainer is built using a small Claude-Code-driven reverse-engineering loop.
 
+**Static analysis** — understand the binary before touching live memory:
+
+- **[Steamless](https://github.com/atom0s/Steamless)** — removes the
+  SteamStub DRM wrapper from `nba2k16.exe`. Without it the `.text` section
+  is encrypted on disk and Ghidra discovers almost nothing.
 - **[Ghidra](https://github.com/NationalSecurityAgency/ghidra)** — NSA's
   open-source disassembler/decompiler. Used to statically analyze the
   unpacked `nba2k16.exe` (~61,700 functions). Provides the xref graph that
   drives every cap-removal patch and struct-layout discovery.
-- **[Steamless](https://github.com/atom0s/Steamless)** — removes the
-  SteamStub DRM wrapper from `nba2k16.exe`. Without it the `.text` section
-  is encrypted on disk and Ghidra discovers almost nothing.
 - **[LaurieWired/GhidraMCP](https://github.com/LaurieWired/GhidraMCP)** —
   MCP server that exposes Ghidra's decompiler, xref lookup, function
   search, and renaming to any MCP-aware client. Lets Claude Code drive
   Ghidra without alt-tabbing.
+
+**Live process analysis** — validate against the running game:
+
+- **[Cheat Engine](https://www.cheatengine.org/)** — the canonical memory
+  editor for Windows games. Used to scan for values, set breakpoints,
+  inspect structs, and prototype Auto Assembler / Lua scripts before
+  hardcoding them into the C# trainer.
 - **[miscusi-peek/cheatengine-mcp-bridge](https://github.com/miscusi-peek/cheatengine-mcp-bridge)** —
-  MCP bridge that exposes Cheat Engine's memory read/write, AOB scan,
-  breakpoint, and process-control APIs. Used to verify hook installations
-  against the live game, validate struct offsets, and prototype patches
-  before they land in C# code.
+  MCP bridge over Cheat Engine. Same read/write/AOB/breakpoint surface,
+  driven from Claude Code instead of the CE GUI. Used to verify hook
+  installations and validate struct offsets in-loop.
+- **[Frida](https://frida.re/)** — dynamic instrumentation. JavaScript
+  hooks via `Interceptor.attach`, hot-reload during a single game session.
+  Used for runtime call tracing where Cheat Engine breakpoints would
+  crash the game on hot 60 Hz code. Scripts live in `tools/frida-scripts/`.
+- **[ReClass.NET](https://github.com/ReClassNET/ReClass.NET)** — visual
+  struct mapper. Attach to nba2k16.exe, paste a known pointer, click
+  bytes to type and name fields. Used to extend the `GameOffsets` map
+  without xref-walking through Ghidra. Projects saved in `tools/reclass/`.
+
+**Agent driver:**
+
 - **[Claude Code](https://claude.com/claude-code)** — the agent driving
   the loop. Reads decompiled functions, traces xrefs, designs patches,
   writes the C# implementation, runs builds, and iterates.
@@ -82,7 +101,7 @@ The trainer is built using a small Claude-Code-driven reverse-engineering loop:
 The combination means the project's reverse-engineering output (offsets,
 patch sites, struct layouts) lives in code rather than scattered notes,
 and the trainer can grow without losing context about *why* each address
-matters.
+matters. See `tools/README.md` for the per-tool workflow rules.
 
 ## Build
 
