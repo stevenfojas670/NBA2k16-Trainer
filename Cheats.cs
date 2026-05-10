@@ -188,5 +188,47 @@ namespace NBA2k16_Trainer
         public const long PATCH_GET_HEIGHT_MODE_CMP = 0xA30F42;
         public static readonly byte[] CMP_ORIGINAL = { 0x83, 0xF8, 0x02 };
         public static readonly byte[] CMP_PATCHED  = { 0x83, 0xF8, 0xFF };
+
+        // ─── Player resolver hook ────────────────────────────────────────────
+        // The instruction `mov [rdx+0x84], ax` runs once per frame the game
+        // updates the active MyPlayer. At that moment rdi == player struct ptr.
+        // Pattern is the original 7 bytes plus the next instruction's 7 bytes
+        // (mov r8d, [r8+0xC8]) to make the AOB unique.
+        public static readonly byte[] HOOK_AOB_PATTERN = {
+            0x66, 0x89, 0x82, 0x84, 0x00, 0x00, 0x00,
+            0x41, 0x8B, 0x80, 0xC8, 0x00, 0x00, 0x00,
+        };
+        public static readonly byte[] HOOK_ORIGINAL_BYTES = {
+            0x66, 0x89, 0x82, 0x84, 0x00, 0x00, 0x00,
+        };
+        // Expected location for the build at hand. Used as a hint only —
+        // the real address comes from the AOB scan, so this can be stale
+        // without breaking anything (it just costs a wider initial scan).
+        public const long HOOK_SITE_HINT = 0x4F5A5F;
+
+        // ─── Player struct field offsets ─────────────────────────────────────
+        public const int PLAYER_LAST_NAME       = 0x00;   // UTF-16 fixed buffer
+        public const int PLAYER_LAST_NAME_BYTES = 36;     // 18 wchars
+        public const int PLAYER_FIRST_NAME      = 0x24;   // UTF-16 fixed buffer
+        public const int PLAYER_FIRST_NAME_BYTES = 40;    // 20 wchars
+        public const int PLAYER_WEIGHT          = 0x4C;   // f32, lbs
+        public const int PLAYER_JERSEY          = 0x61;   // u8
+        public const int PLAYER_PHYS_ATTRS_PTR  = 0x80;   // qword → sub-buffer
+        public const int PLAYER_POSITION_DWORD  = 0xC8;   // u32; pos in bits 8..13
+        public const int PLAYER_HANDEDNESS     = 0xCA;    // u8 bitfield
+        public const int PLAYER_ATTRIBUTE_PTR_OFFSET = 0x388; // ratings table
+        public const int PLAYER_BADGE_PTR_OFFSET     = 0x419; // badges bitfield
+
+        // Sub-buffer (referenced by [player + 0x80])
+        public const int PHYS_HEIGHT          = 0x00;     // f32, cm
+        public const int PHYS_WINGSPAN        = 0x04;     // f32, cm
+        public const int PHYS_BODY_LENGTH     = 0x08;     // f32
+        public const int PHYS_SHOULDER_WIDTH  = 0x0C;     // f32
+
+        // Position bit positions inside the dword at PLAYER_POSITION_DWORD.
+        // `mov edi, [rbx+0xC8]; shr edi, 8; and edi, 7` extracts primary.
+        public const int POS_PRIMARY_SHIFT   = 8;
+        public const int POS_SECONDARY_SHIFT = 11;
+        public const uint POS_MASK = 0x7;
     }
 }
