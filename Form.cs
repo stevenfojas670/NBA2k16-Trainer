@@ -59,6 +59,12 @@ namespace NBA2k16_Trainer
         private Button _revertRatingsBtn = null!;
         private CheckBox _autoApplyRatingsToggle = null!;
 
+        // Badges tab
+        private readonly Dictionary<string, ComboBox> _badgeBoxes = new();
+        private Button _applyBadgesBtn = null!;
+        private Button _revertBadgesBtn = null!;
+        private CheckBox _autoApplyBadgesToggle = null!;
+
         // ─── State ──────────────────────────────────────────────────────────
         private readonly Settings _settings;
         private readonly FloatConstantCheat _maxHeightCheat;
@@ -67,6 +73,7 @@ namespace NBA2k16_Trainer
         private readonly PlayerResolver _resolver = new();
         private readonly PlayerProfileCheat _profileCheat = new();
         private readonly RatingsCheat _ratingsCheat = new();
+        private readonly BadgesCheat _badgesCheat = new();
 
         private int? _attachedPid;
         private IntPtr _lastPlayerBase = IntPtr.Zero;
@@ -494,13 +501,95 @@ namespace NBA2k16_Trainer
             var page = new TabPage("Badges");
             _tabs.TabPages.Add(page);
 
+            // Scrolling panel of grouped badges — same shape as the Ratings tab so
+            // the two screens behave identically (scroll, GroupBox per category,
+            // two columns of editor rows).
+            var scroll = new Panel
+            {
+                Top = 8, Left = 8, Width = 688, Height = 332,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            string[] tierItems = { "OFF", "Bronze", "Silver", "Gold" };
+            string[] toggleItems = { "OFF", "ON" };
+
+            var groups = BadgesCheat.Badges
+                .GroupBy(b => b.Group)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox
+                {
+                    Text = grp.Key, Top = top, Left = 4, Width = 660,
+                };
+
+                int innerTop = 22;
+                int col = 0;
+                foreach (var b in grp)
+                {
+                    int x = col == 0 ? 8 : 328;
+                    int y = innerTop;
+
+                    gb.Controls.Add(new Label
+                    {
+                        Text = b.Name + ":", Top = y + 3, Left = x, Width = 220,
+                        AutoEllipsis = true,
+                    });
+                    var combo = new ComboBox
+                    {
+                        Top = y, Left = x + 220, Width = 90,
+                        DropDownStyle = ComboBoxStyle.DropDownList,
+                    };
+                    combo.Items.AddRange(b.BitLength == 1 ? toggleItems : tierItems);
+                    combo.SelectedIndex = 0;
+                    _badgeBoxes[b.Name] = combo;
+                    gb.Controls.Add(combo);
+
+                    if (col == 1) innerTop += 28;
+                    col = 1 - col;
+                }
+                if (col == 1) innerTop += 28;
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+
+                top += gb.Height + 6;
+            }
+
+            _applyBadgesBtn = new Button { Text = "Apply", Top = 348, Left = 8, Width = 130, Height = 32 };
+            _applyBadgesBtn.Click += (_, _) => ApplyBadges();
+            page.Controls.Add(_applyBadgesBtn);
+
+            _revertBadgesBtn = new Button
+            {
+                Text = "Revert to attach-time values", Top = 348, Left = 148, Width = 220, Height = 32,
+            };
+            _revertBadgesBtn.Click += (_, _) => RevertBadges();
+            page.Controls.Add(_revertBadgesBtn);
+
+            _autoApplyBadgesToggle = new CheckBox
+            {
+                Text = "Auto-apply badges when player resolves",
+                Top = 386, Left = 8, Width = 360, Height = 22,
+                Checked = _settings.AutoApplyBadges,
+            };
+            _autoApplyBadgesToggle.CheckedChanged += (_, _) =>
+            {
+                _settings.AutoApplyBadges = _autoApplyBadgesToggle.Checked;
+                _settings.Save();
+            };
+            page.Controls.Add(_autoApplyBadgesToggle);
+
             page.Controls.Add(new Label
             {
-                Top = 16, Left = 16, Width = 660, Height = 200,
-                Text = "Badges are scoped out but not yet wired. Each badge is a single bit at "
-                     + "BadgePtr (= player + 0x419) with a fixed (byte, bit) offset. The full mapping "
-                     + "lives in NBA2k16.ct (records 5032..5120) and will land here in a follow-up.",
-                ForeColor = Color.DimGray,
+                Top = 414, Left = 8, Width = 670, Height = 30,
+                Text = "Heads up: badges with [Exclusive with ...] in the name share a slot — turning one off in-game "
+                     + "may auto-enable its partner. Save & reload to lock changes in.",
+                ForeColor = Color.Firebrick,
             });
         }
 
@@ -653,6 +742,7 @@ namespace NBA2k16_Trainer
             _positionClampCheat.ResetCapturedState();
             _profileCheat.ResetCapturedState();
             _ratingsCheat.ResetCapturedState();
+            _badgesCheat.ResetCapturedState();
 
             SetGlobalControlsEnabled(false);
             SetPlayerControlsEnabled(false);
@@ -692,6 +782,9 @@ namespace NBA2k16_Trainer
                     var ratings = _ratingsCheat.Probe(session, p);
                     PopulateRatingInputs(ratings);
 
+                    var badges = _badgesCheat.Probe(session, p);
+                    PopulateBadgeInputs(badges);
+
                     _profileLoaded = true;
                     SetPlayerControlsEnabled(true);
                     UpdateStatusLabel();
@@ -712,6 +805,13 @@ namespace NBA2k16_Trainer
                         foreach (var kv in _settings.RatingOverrides!) desired[kv.Key] = kv.Value;
                         int ok = ApplyToCopies(c => _ratingsCheat.Apply(session, c, desired));
                         Log($"Auto-applied saved rating overrides to {ok}/{_playerCopies.Count} copies.");
+                    }
+                    if (_settings.AutoApplyBadges && _settings.BadgeOverrides is { Count: > 0 })
+                    {
+                        var desired = new Dictionary<string, byte>(badges);
+                        foreach (var kv in _settings.BadgeOverrides!) desired[kv.Key] = kv.Value;
+                        int ok = ApplyToCopies(c => _badgesCheat.Apply(session, c, desired));
+                        Log($"Auto-applied saved badge overrides to {ok}/{_playerCopies.Count} copies.");
                     }
                 }
                 catch (Exception ex)
@@ -947,6 +1047,55 @@ namespace NBA2k16_Trainer
             foreach (var box in _ratingBoxes.Values) box.Value = v;
         }
 
+        private void ApplyBadges()
+        {
+            if (_lastPlayerBase == IntPtr.Zero)
+            {
+                Log("No player resolved yet — can't apply badges.");
+                return;
+            }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadBadgesFromInputs();
+                    int okBadges = ApplyToCopies(c => _badgesCheat.Apply(session, c, desired));
+
+                    var overrides = _badgesCheat.Original is { } orig
+                        ? desired.Where(kv => !orig.TryGetValue(kv.Key, out byte ov) || ov != kv.Value)
+                                 .ToDictionary(kv => kv.Key, kv => kv.Value)
+                        : desired;
+                    _settings.BadgeOverrides = overrides.Count > 0 ? overrides : null;
+                    _settings.Save();
+                    Log($"Badges written ({overrides.Count} overrides, {okBadges}/{_playerCopies.Count} copies). Reload the save to lock in.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Badges apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertBadges()
+        {
+            if (_lastPlayerBase == IntPtr.Zero) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    int okRevert = ApplyToCopies(c => _badgesCheat.Revert(session, c));
+                    if (_badgesCheat.Original is { } original) PopulateBadgeInputs(original);
+                    Log($"Badges reverted on {okRevert}/{_playerCopies.Count} copies.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Badges revert failed: " + ex.Message);
+                }
+            }
+        }
+
         /// <summary>
         /// Runs <paramref name="action"/> against every discovered player copy,
         /// swallowing per-copy exceptions so one bad address doesn't abort
@@ -1016,6 +1165,29 @@ namespace NBA2k16_Trainer
             return dict;
         }
 
+        private void PopulateBadgeInputs(Dictionary<string, byte> values)
+        {
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_badgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                if (!values.TryGetValue(b.Name, out byte v)) continue;
+                int max = combo.Items.Count - 1;
+                combo.SelectedIndex = Math.Clamp(v, 0, max);
+            }
+        }
+
+        private Dictionary<string, byte> ReadBadgesFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_badgeBoxes.Count);
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_badgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                int idx = Math.Max(0, combo.SelectedIndex);
+                dict[b.Name] = (byte)idx;
+            }
+            return dict;
+        }
+
         private bool SettingsHasProfile() =>
             _settings.FirstName is not null
             || _settings.LastName is not null
@@ -1059,6 +1231,7 @@ namespace NBA2k16_Trainer
             _settings.AutoApplyOnAttach = _autoApplyToggle.Checked;
             _settings.AutoApplyProfile = _autoApplyProfileToggle.Checked;
             _settings.AutoApplyRatings = _autoApplyRatingsToggle.Checked;
+            _settings.AutoApplyBadges = _autoApplyBadgesToggle.Checked;
             _settings.Save();
         }
 
@@ -1091,6 +1264,10 @@ namespace NBA2k16_Trainer
             _ratingApplyOverrideBtn.Enabled = resolved;
             _applyRatingsBtn.Enabled = resolved;
             _revertRatingsBtn.Enabled = resolved;
+
+            foreach (var combo in _badgeBoxes.Values) combo.Enabled = resolved;
+            _applyBadgesBtn.Enabled = resolved;
+            _revertBadgesBtn.Enabled = resolved;
         }
 
         private void UpdateStatusLabel()

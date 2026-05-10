@@ -32,6 +32,11 @@ namespace NBA2k16_Trainer
         public Dictionary<string, byte>? RatingOverrides { get; set; }
         public bool AutoApplyRatings { get; set; } = false;
 
+        // Badges: same shape as ratings — name → tier (0..3 for 2-bit, 0..1 for 1-bit).
+        // Only entries the user has explicitly edited go in here.
+        public Dictionary<string, byte>? BadgeOverrides { get; set; }
+        public bool AutoApplyBadges { get; set; } = false;
+
         [JsonIgnore]
         public static string FilePath { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

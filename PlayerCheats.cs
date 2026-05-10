@@ -148,34 +148,4 @@ namespace NBA2k16_Trainer
             new Dictionary<string, byte>(value);
     }
 
-    /// <summary>
-    /// Phase-2 scaffolding for badges. The CT records 5032..5120 model each
-    /// badge as a single bit at <c>BadgePtr + (byteOffset, bitIndex)</c>. The
-    /// table below is intentionally empty for now — the form has a placeholder
-    /// tab; populate this list and wire UI when we tackle badges properly.
-    /// </summary>
-    internal sealed record BadgeDef(string Name, int ByteOffset, int BitIndex, string Group);
-
-    internal static class BadgesScopeOut
-    {
-        public static readonly BadgeDef[] AllBadges = Array.Empty<BadgeDef>();
-
-        public static bool ReadBadge(ProcessSession s, IntPtr playerBase, BadgeDef b)
-        {
-            byte by = PlayerStructIO.ReadU8(s,
-                PlayerStructIO.BadgeBase(playerBase),
-                b.ByteOffset);
-            return ((by >> b.BitIndex) & 1) != 0;
-        }
-
-        public static void WriteBadge(ProcessSession s, IntPtr playerBase, BadgeDef b, bool on)
-        {
-            IntPtr addr = new IntPtr(PlayerStructIO.BadgeBase(playerBase).ToInt64() + b.ByteOffset);
-            byte by = s.ReadByte(addr);
-            byte mask = (byte)(1 << b.BitIndex);
-            by = (byte)(on ? (by | mask) : (by & ~mask));
-            s.WriteByte(addr, by);
-        }
-
-    }
 }
