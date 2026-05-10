@@ -32,6 +32,58 @@ this constraint.
   Optionally re-applies on attach.
 - **Activity log** showing every memory write.
 
+## Roadmap
+
+This trainer is being built out in phases. v1.0 (above) is the foundation.
+Subsequent phases progressively expand the trainer into a full MyCareer
+editor. Items below are aspirational and shipped incrementally:
+
+| Phase | Status | Scope |
+|---|---|---|
+| 1   | ✅ Shipped     | Height clamps (global + per-position). |
+| 1.5 | 🚧 On `dev`    | Live MyPlayer profile + ratings editing via an AOB hook at `nba2k16.exe+0x4F56BF`. |
+| 2   | 🔜 Next        | Cap removal — hard 25-99 rating clamp, position-based attribute caps, archetype caps, height-vs-attribute soft caps. Save survives reload. Badges UI. Cheat-registry refactor. |
+| 3   | 🔜             | Roster editing (every player on every team) + force trades (move any player to any team). |
+| 4   | 🔜             | Live match state — quarter, clocks, scores, fouls, teammate grade, MyPlayer in-game stats. |
+| 5   | 🔜             | Gameplay sliders (~50 user/CPU floats) + cosmetics (shoes, accessories, gear). |
+| 6   | 🔜             | Tendencies, hot zones, signature animations, appearance. |
+| 7   | 🔜             | MyCareer core — VC, skill points, rep, XP, endorsements, contract value, trade demand. |
+| 8   | 🔜             | Always-on gameplay code patches — always-green release, no fatigue, no fouls, no injuries, etc. |
+| 9   | 🔜             | QoL — hotkeys, cheat profiles, live readback panel, persistent log, automatic mode detection. |
+
+Scope is intentionally limited to MyCareer and modes that affect it.
+MyGM owner-mode, MyLeague league management, MyTeam, Pro-Am, and other
+online modes remain explicitly out of scope — see disclaimer above.
+
+## Tooling
+
+The trainer is built using a small Claude-Code-driven reverse-engineering loop:
+
+- **[Ghidra](https://github.com/NationalSecurityAgency/ghidra)** — NSA's
+  open-source disassembler/decompiler. Used to statically analyze the
+  unpacked `nba2k16.exe` (~61,700 functions). Provides the xref graph that
+  drives every cap-removal patch and struct-layout discovery.
+- **[Steamless](https://github.com/atom0s/Steamless)** — removes the
+  SteamStub DRM wrapper from `nba2k16.exe`. Without it the `.text` section
+  is encrypted on disk and Ghidra discovers almost nothing.
+- **[LaurieWired/GhidraMCP](https://github.com/LaurieWired/GhidraMCP)** —
+  MCP server that exposes Ghidra's decompiler, xref lookup, function
+  search, and renaming to any MCP-aware client. Lets Claude Code drive
+  Ghidra without alt-tabbing.
+- **[miscusi-peek/cheatengine-mcp-bridge](https://github.com/miscusi-peek/cheatengine-mcp-bridge)** —
+  MCP bridge that exposes Cheat Engine's memory read/write, AOB scan,
+  breakpoint, and process-control APIs. Used to verify hook installations
+  against the live game, validate struct offsets, and prototype patches
+  before they land in C# code.
+- **[Claude Code](https://claude.com/claude-code)** — the agent driving
+  the loop. Reads decompiled functions, traces xrefs, designs patches,
+  writes the C# implementation, runs builds, and iterates.
+
+The combination means the project's reverse-engineering output (offsets,
+patch sites, struct layouts) lives in code rather than scattered notes,
+and the trainer can grow without losing context about *why* each address
+matters.
+
 ## Build
 
 Requirements:
