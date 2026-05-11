@@ -46,6 +46,8 @@ namespace NBA2k16_Trainer
         private NumericUpDown _weightBox = null!;
         private NumericUpDown _heightBox = null!;
         private NumericUpDown _wingspanBox = null!;
+        private NumericUpDown _gameplayHeightBox = null!;
+        private NumericUpDown _gameplayWingspanBox = null!;
         private Label _liveProfileLabel = null!;
         private Button _applyProfileBtn = null!;
         private Button _revertProfileBtn = null!;
@@ -317,11 +319,13 @@ namespace NBA2k16_Trainer
 
             var bodyBox = new GroupBox
             {
-                Text = "Body", Top = 148, Left = 8, Width = 672, Height = 110,
+                Text = "Body", Top = 148, Left = 8, Width = 672, Height = 142,
             };
             page.Controls.Add(bodyBox);
 
-            bodyBox.Controls.Add(new Label { Text = "Height (cm):", Top = 28, Left = 14, Width = 90 });
+            // Row 1 — visual height/wingspan. These feed the heap-resident player
+            // struct copies; the mesh re-instantiates from them at halftime / replay.
+            bodyBox.Controls.Add(new Label { Text = "Height (visual):", Top = 28, Left = 14, Width = 90 });
             _heightBox = new NumericUpDown
             {
                 Top = 25, Left = 110, Width = 100,
@@ -329,7 +333,7 @@ namespace NBA2k16_Trainer
             };
             bodyBox.Controls.Add(_heightBox);
 
-            bodyBox.Controls.Add(new Label { Text = "Wingspan (cm):", Top = 28, Left = 230, Width = 100 });
+            bodyBox.Controls.Add(new Label { Text = "Wingspan (visual):", Top = 28, Left = 230, Width = 100 });
             _wingspanBox = new NumericUpDown
             {
                 Top = 25, Left = 335, Width = 100,
@@ -337,28 +341,47 @@ namespace NBA2k16_Trainer
             };
             bodyBox.Controls.Add(_wingspanBox);
 
-            bodyBox.Controls.Add(new Label { Text = "Weight (lbs):", Top = 60, Left = 14, Width = 90 });
-            _weightBox = new NumericUpDown
+            // Row 2 — gameplay height/wingspan. These feed the .rdata-pointed copy
+            // that FUN_140c0a8e0 reads every frame for the reach / max-step formula.
+            // Tall values here amplify movement during dunk animations.
+            bodyBox.Controls.Add(new Label { Text = "Height (gameplay):", Top = 60, Left = 14, Width = 100 });
+            _gameplayHeightBox = new NumericUpDown
             {
                 Top = 57, Left = 110, Width = 100,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_gameplayHeightBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Wingspan (gameplay):", Top = 60, Left = 230, Width = 110 });
+            _gameplayWingspanBox = new NumericUpDown
+            {
+                Top = 57, Left = 335, Width = 100,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_gameplayWingspanBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Weight (lbs):", Top = 92, Left = 14, Width = 90 });
+            _weightBox = new NumericUpDown
+            {
+                Top = 89, Left = 110, Width = 100,
                 Minimum = 50, Maximum = 800, DecimalPlaces = 2, Increment = 1m,
             };
             bodyBox.Controls.Add(_weightBox);
 
             _liveProfileLabel = new Label
             {
-                Top = 268, Left = 14, Width = 660, Height = 20,
+                Top = 300, Left = 14, Width = 660, Height = 20,
                 Text = "Live: —", ForeColor = Color.DimGray,
             };
             page.Controls.Add(_liveProfileLabel);
 
-            _applyProfileBtn = new Button { Text = "Apply", Top = 295, Left = 14, Width = 130, Height = 32 };
+            _applyProfileBtn = new Button { Text = "Apply", Top = 327, Left = 14, Width = 130, Height = 32 };
             _applyProfileBtn.Click += (_, _) => ApplyProfile();
             page.Controls.Add(_applyProfileBtn);
 
             _revertProfileBtn = new Button
             {
-                Text = "Revert to attach-time values", Top = 295, Left = 154, Width = 220, Height = 32,
+                Text = "Revert to attach-time values", Top = 327, Left = 154, Width = 220, Height = 32,
             };
             _revertProfileBtn.Click += (_, _) => RevertProfile();
             page.Controls.Add(_revertProfileBtn);
@@ -366,7 +389,7 @@ namespace NBA2k16_Trainer
             _autoApplyProfileToggle = new CheckBox
             {
                 Text = "Auto-apply profile when player resolves",
-                Top = 340, Left = 14, Width = 360, Height = 22,
+                Top = 372, Left = 14, Width = 360, Height = 22,
                 Checked = _settings.AutoApplyProfile,
             };
             _autoApplyProfileToggle.CheckedChanged += (_, _) =>
@@ -378,10 +401,12 @@ namespace NBA2k16_Trainer
 
             page.Controls.Add(new Label
             {
-                Top = 372, Left = 14, Width = 660, Height = 36,
-                Text = "Note: per-player Height/Wingspan are written through the +0x80 sub-pointer. The global "
-                     + "height clamps on the Heights tab still apply — raise them first if you want to push past "
-                     + "the default 231.20 cm.",
+                Top = 404, Left = 14, Width = 660, Height = 50,
+                Text = "Visual values feed the heap copies (mesh refreshes at halftime). Gameplay values feed the "
+                     + ".rdata-pointed copy used by the per-frame reach formula — tall gameplay heights amplify "
+                     + "step distance during dunks. Keep them equal for the original behaviour; lower gameplay "
+                     + "height to keep dunks at normal speed while looking tall. Global height clamps on the "
+                     + "Heights tab still apply.",
                 ForeColor = Color.DimGray,
             });
         }
@@ -1137,6 +1162,8 @@ namespace NBA2k16_Trainer
             _weightBox.Value = Math.Clamp((decimal)snap.Weight, _weightBox.Minimum, _weightBox.Maximum);
             _heightBox.Value = Math.Clamp((decimal)snap.Height, _heightBox.Minimum, _heightBox.Maximum);
             _wingspanBox.Value = Math.Clamp((decimal)snap.Wingspan, _wingspanBox.Minimum, _wingspanBox.Maximum);
+            _gameplayHeightBox.Value = Math.Clamp((decimal)snap.GameplayHeight, _gameplayHeightBox.Minimum, _gameplayHeightBox.Maximum);
+            _gameplayWingspanBox.Value = Math.Clamp((decimal)snap.GameplayWingspan, _gameplayWingspanBox.Minimum, _gameplayWingspanBox.Maximum);
         }
 
         private void PopulateRatingInputs(Dictionary<string, byte> values)
@@ -1156,7 +1183,9 @@ namespace NBA2k16_Trainer
             Weight: (float)_weightBox.Value,
             Jersey: (byte)_jerseyBox.Value,
             Height: (float)_heightBox.Value,
-            Wingspan: (float)_wingspanBox.Value);
+            Wingspan: (float)_wingspanBox.Value,
+            GameplayHeight: (float)_gameplayHeightBox.Value,
+            GameplayWingspan: (float)_gameplayWingspanBox.Value);
 
         private Dictionary<string, byte> ReadRatingsFromInputs()
         {
@@ -1196,7 +1225,9 @@ namespace NBA2k16_Trainer
             || _settings.Weight is not null
             || _settings.Jersey is not null
             || _settings.PerPlayerHeight is not null
-            || _settings.Wingspan is not null;
+            || _settings.Wingspan is not null
+            || _settings.PerPlayerGameplayHeight is not null
+            || _settings.GameplayWingspan is not null;
 
         private PlayerProfileSnapshot MergeProfileFromSettings(PlayerProfileSnapshot live) => live with
         {
@@ -1208,6 +1239,8 @@ namespace NBA2k16_Trainer
             Jersey = _settings.Jersey ?? live.Jersey,
             Height = _settings.PerPlayerHeight ?? live.Height,
             Wingspan = _settings.Wingspan ?? live.Wingspan,
+            GameplayHeight = _settings.PerPlayerGameplayHeight ?? live.GameplayHeight,
+            GameplayWingspan = _settings.GameplayWingspan ?? live.GameplayWingspan,
         };
 
         private void PersistProfileToSettings(PlayerProfileSnapshot v)
@@ -1220,6 +1253,8 @@ namespace NBA2k16_Trainer
             _settings.Jersey = v.Jersey;
             _settings.PerPlayerHeight = v.Height;
             _settings.Wingspan = v.Wingspan;
+            _settings.PerPlayerGameplayHeight = v.GameplayHeight;
+            _settings.GameplayWingspan = v.GameplayWingspan;
             _settings.Save();
         }
 
@@ -1256,6 +1291,8 @@ namespace NBA2k16_Trainer
             _weightBox.Enabled = resolved;
             _heightBox.Enabled = resolved;
             _wingspanBox.Enabled = resolved;
+            _gameplayHeightBox.Enabled = resolved;
+            _gameplayWingspanBox.Enabled = resolved;
             _applyProfileBtn.Enabled = resolved;
             _revertProfileBtn.Enabled = resolved;
 

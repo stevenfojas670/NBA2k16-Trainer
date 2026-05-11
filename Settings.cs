@@ -8,7 +8,7 @@ namespace NBA2k16_Trainer
 {
     internal sealed class Settings
     {
-        public int SchemaVersion { get; set; } = 2;
+        public int SchemaVersion { get; set; } = 3;
 
         // ── Existing global height clamp settings ──────────────────────────────
         public float MaxHeight { get; set; } = 300.0f;
@@ -26,6 +26,11 @@ namespace NBA2k16_Trainer
         public byte? Jersey { get; set; }
         public float? PerPlayerHeight { get; set; }
         public float? Wingspan { get; set; }
+        // Gameplay-side height/wingspan, written to the .rdata-pointed PHYS copy
+        // that drives FUN_140c0a8e0's reach formula. Separate from the visual
+        // pair so users can play tall without the dunk-overshoot side-effect.
+        public float? PerPlayerGameplayHeight { get; set; }
+        public float? GameplayWingspan { get; set; }
         public bool AutoApplyProfile { get; set; } = false;
 
         // Ratings: only entries the user has explicitly edited go in here.

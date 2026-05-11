@@ -85,6 +85,24 @@ namespace NBA2k16_Trainer
         public static IntPtr ReadPhysAttrsPtr(ProcessSession s, IntPtr playerBase)
             => s.ReadPointer(new IntPtr(playerBase.ToInt64() + GameOffsets.PLAYER_PHYS_ATTRS_PTR));
 
+        // x64 user-mode modules sit above this boundary; private heap allocations
+        // sit far below it. The classification is robust enough for the per-copy
+        // heap-vs-rdata branch in <see cref="PlayerProfileCheat.Write"/>.
+        private const long ModulePointerThreshold = 0x7FF000000000L;
+
+        /// <summary>
+        /// Returns true when the qword at <c>playerBase + outerOffset</c> is a
+        /// pointer that lands inside a loaded module (nba2k16.exe's .rdata in
+        /// practice). Used to detect the player struct copy whose PHYS sub-buffer
+        /// is a binary template — writes there leak into the live reach formula
+        /// instead of the halftime-refreshed mesh.
+        /// </summary>
+        public static bool IsIndirectInModule(ProcessSession s, IntPtr playerBase, int outerOffset)
+        {
+            IntPtr sub = s.ReadPointer(new IntPtr(playerBase.ToInt64() + outerOffset));
+            return sub != IntPtr.Zero && sub.ToInt64() >= ModulePointerThreshold;
+        }
+
         public static float ReadIndirectF32(ProcessSession s, IntPtr playerBase, int outerOffset, int innerOffset)
         {
             IntPtr sub = s.ReadPointer(new IntPtr(playerBase.ToInt64() + outerOffset));

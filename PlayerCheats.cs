@@ -7,6 +7,16 @@ namespace NBA2k16_Trainer
     /// <summary>
     /// Snapshot of all editable player profile fields at one point in time.
     /// Used both as the "captured original" for revert and as the "desired" payload for apply.
+    ///
+    /// Height/Wingspan are split into a visual pair (Height, Wingspan) and a
+    /// gameplay pair (GameplayHeight, GameplayWingspan). The visual values feed
+    /// the heap-resident player struct copies (drive the mesh re-instantiated at
+    /// halftime / replay). The gameplay values feed the one copy whose +0x80
+    /// PHYS sub-buffer pointer chains to nba2k16.exe's .rdata — that field is
+    /// read every frame by FUN_140c0a8e0's reach formula (max_step ∝ height) and
+    /// drives per-frame movement step distance during dunks. Editing them as a
+    /// single value (the original behaviour) made visual edits leak into the
+    /// reach calc, which is why tall edits produced "extremely fast" dunks.
     /// </summary>
     internal sealed record PlayerProfileSnapshot(
         string FirstName,
@@ -16,7 +26,9 @@ namespace NBA2k16_Trainer
         float Weight,
         byte Jersey,
         float Height,
-        float Wingspan);
+        float Wingspan,
+        float GameplayHeight,
+        float GameplayWingspan);
 
     /// <summary>
     /// Reads/writes the player identity + body block (name, position, jersey,
@@ -28,6 +40,12 @@ namespace NBA2k16_Trainer
         public override PlayerProfileSnapshot Read(ProcessSession s, IntPtr p)
         {
             var (primary, secondary) = PlayerStructIO.ReadPositions(s, p);
+            // On Read we can only observe whichever PHYS sub-buffer p chains to.
+            // The resolver-found p is always heap-backed, so the two pairs are
+            // initialised equal here; they only diverge once the user edits the
+            // gameplay boxes and Apply fans out across the multi-copy set.
+            float height   = PlayerStructIO.ReadIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_HEIGHT);
+            float wingspan = PlayerStructIO.ReadIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_WINGSPAN);
             return new PlayerProfileSnapshot(
                 FirstName: PlayerStructIO.ReadName(s, p, GameOffsets.PLAYER_FIRST_NAME, GameOffsets.PLAYER_FIRST_NAME_BYTES),
                 LastName:  PlayerStructIO.ReadName(s, p, GameOffsets.PLAYER_LAST_NAME, GameOffsets.PLAYER_LAST_NAME_BYTES),
@@ -35,8 +53,10 @@ namespace NBA2k16_Trainer
                 SecondaryPosition: secondary,
                 Weight: PlayerStructIO.ReadF32(s, p, GameOffsets.PLAYER_WEIGHT),
                 Jersey: PlayerStructIO.ReadU8(s, p, GameOffsets.PLAYER_JERSEY),
-                Height: PlayerStructIO.ReadIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_HEIGHT),
-                Wingspan: PlayerStructIO.ReadIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_WINGSPAN));
+                Height: height,
+                Wingspan: wingspan,
+                GameplayHeight: height,
+                GameplayWingspan: wingspan);
         }
 
         protected override void Write(ProcessSession s, IntPtr p, PlayerProfileSnapshot v)
@@ -46,8 +66,13 @@ namespace NBA2k16_Trainer
             PlayerStructIO.WritePositions(s, p, v.PrimaryPosition, v.SecondaryPosition);
             PlayerStructIO.WriteF32(s, p, GameOffsets.PLAYER_WEIGHT, v.Weight);
             PlayerStructIO.WriteU8(s, p, GameOffsets.PLAYER_JERSEY, v.Jersey);
-            PlayerStructIO.WriteIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_HEIGHT, v.Height);
-            PlayerStructIO.WriteIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_WINGSPAN, v.Wingspan);
+            // Module-pointed copy → write the gameplay pair (drives reach formula);
+            // heap copies → write the visual pair (drives mesh refresh at halftime).
+            bool moduleSub = PlayerStructIO.IsIndirectInModule(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR);
+            float heightOut   = moduleSub ? v.GameplayHeight   : v.Height;
+            float wingspanOut = moduleSub ? v.GameplayWingspan : v.Wingspan;
+            PlayerStructIO.WriteIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_HEIGHT, heightOut);
+            PlayerStructIO.WriteIndirectF32(s, p, GameOffsets.PLAYER_PHYS_ATTRS_PTR, GameOffsets.PHYS_WINGSPAN, wingspanOut);
         }
     }
 
