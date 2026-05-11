@@ -18,9 +18,14 @@ sessions don't have to remap the same struct.
 
 ## What to map (in priority order)
 
-- **MyPlayer struct** — extend what `GameOffsets` already knows. Confirm
-  the +0x3C4 ratings region, the +0x419 badge region, the +0x80 phys
-  sub-buffer. Find the animation slot block (probably near badges).
+- **MyPlayer struct** — extend what `GameOffsets` already knows.
+  - ✅ `+0x3C4` ratings region — 41 slots, 1 byte per rating, packed at
+    offsets `0x00..0x2B` (gap at `0x29`). Verified via ReClass uint32
+    view reading `0x63636363` and single-byte writes leaving neighbors
+    untouched.
+  - 🔜 `+0x419` badge region — verify bitfield layout.
+  - 🔜 `+0x80` phys sub-buffer — height/wingspan known; map the rest.
+  - 🔜 Animation slot block (probably near badges).
 - **Phys sub-buffer** (via player+0x80) — height/wingspan are known;
   what else lives in there?
 - **MyCareer save struct** (eventually) — backing store for VC / skill
