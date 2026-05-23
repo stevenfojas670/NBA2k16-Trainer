@@ -128,6 +128,9 @@ namespace NBA2k16_Trainer
 
         public static IntPtr BadgeBase(IntPtr playerBase) =>
             new IntPtr(playerBase.ToInt64() + GameOffsets.PLAYER_BADGE_PTR_OFFSET);
+
+        public static IntPtr TendenciesBase(IntPtr playerBase) =>
+            new IntPtr(playerBase.ToInt64() + GameOffsets.PLAYER_TENDENCIES_OFFSET);
     }
 
     /// <summary>

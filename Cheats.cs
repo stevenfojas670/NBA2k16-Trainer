@@ -295,6 +295,24 @@ namespace NBA2k16_Trainer
         public const int PLAYER_ATTRIBUTE_PTR_OFFSET = 0x3C4; // ratings table
         public const int PLAYER_BADGE_PTR_OFFSET     = 0x419; // badges bitfield
 
+        // Tendency block in the STATIC roster record. Verified 2026-05-23 by
+        // bulk-edit position-encoding pass on Westbrook via the in-game roster
+        // editor: each tendency is one raw 0..100 byte. The byte at +0x3C4 is
+        // a marker (always 0xDE) — skip it; data starts at +0x3C5.
+        //
+        // CAVEAT: PLAYER_ATTRIBUTE_PTR_OFFSET above is also 0x3C4. In the
+        // static roster, +0x3C4 is actually tendency data (marker + 84
+        // tendencies), NOT a ratings table. The existing RatingsCheat at
+        // +0x3C4 has been editing tendencies on the Roster/Players tabs;
+        // the heap MyPlayer struct may genuinely use a different layout at
+        // the same offset (per the Phase-1 verification comment), so the
+        // MyPlayer-tab Ratings UI may still be correct. To be revisited in
+        // a separate session: locating the real ratings block in static
+        // (probably at +0x388 — values there scaled 0..255→0..100 land in
+        // the expected ratings range).
+        public const int PLAYER_TENDENCIES_OFFSET = 0x3C5;
+        public const int PLAYER_TENDENCIES_LENGTH = 84;
+
         // Sub-buffer (referenced by [player + 0x80])
         public const int PHYS_HEIGHT          = 0x00;     // f32, cm
         public const int PHYS_WINGSPAN        = 0x04;     // f32, cm

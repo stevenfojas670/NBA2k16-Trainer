@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -71,6 +72,7 @@ namespace NBA2k16_Trainer
         private ComboBox _rosterTeamCombo = null!;
         private ListBox _rosterPlayerList = null!;
         private Button _rosterRefreshBtn = null!;
+        private Button _revertRosterToBaselineBtn = null!;
         private Label _rosterStatusLabel = null!;
         private TabControl _rosterSubTabs = null!;
 
@@ -97,6 +99,14 @@ namespace NBA2k16_Trainer
         private readonly Dictionary<string, ComboBox> _rosterBadgeBoxes = new();
         private Button _applyRosterBadgesBtn = null!;
         private Button _revertRosterBadgesBtn = null!;
+        private Button _maxAllRosterBadgesBtn = null!;
+
+        // Roster tab — Tendencies sub-page
+        private readonly Dictionary<string, NumericUpDown> _rosterTendencyBoxes = new();
+        private NumericUpDown _rosterTendencyOverrideBox = null!;
+        private Button _rosterTendencyApplyOverrideBtn = null!;
+        private Button _applyRosterTendenciesBtn = null!;
+        private Button _revertRosterTendenciesBtn = null!;
 
         // ─── State ──────────────────────────────────────────────────────────
         private readonly Settings _settings;
@@ -114,6 +124,11 @@ namespace NBA2k16_Trainer
         private readonly PlayerProfileCheat _rosterProfileCheat = new();
         private readonly RatingsCheat _rosterRatingsCheat = new();
         private readonly BadgesCheat _rosterBadgesCheat = new();
+        private readonly TendenciesCheat _rosterTendenciesCheat = new();
+
+        // Persists raw 0x430-byte snapshots so we can revert any roster
+        // player to their "original" state across trainer launches.
+        private readonly RosterBaselineStore _baselineStore = new();
 
         // Currently-loaded roster player. -1 means "no player selected".
         private int _rosterSelectedIndex = -1;
@@ -123,6 +138,7 @@ namespace NBA2k16_Trainer
         private TextBox _playerListSearchBox = null!;
         private ListBox _playerListListBox = null!;
         private Button _playerListRefreshBtn = null!;
+        private Button _revertPlayerListToBaselineBtn = null!;
         private Label _playerListStatusLabel = null!;
         private TabControl _playerListSubTabs = null!;
 
@@ -149,6 +165,14 @@ namespace NBA2k16_Trainer
         private readonly Dictionary<string, ComboBox> _playerListBadgeBoxes = new();
         private Button _applyPlayerListBadgesBtn = null!;
         private Button _revertPlayerListBadgesBtn = null!;
+        private Button _maxAllPlayerListBadgesBtn = null!;
+
+        // Tendencies sub-page fields
+        private readonly Dictionary<string, NumericUpDown> _playerListTendencyBoxes = new();
+        private NumericUpDown _playerListTendencyOverrideBox = null!;
+        private Button _playerListTendencyApplyOverrideBtn = null!;
+        private Button _applyPlayerListTendenciesBtn = null!;
+        private Button _revertPlayerListTendenciesBtn = null!;
 
         // Third independent set of cheats so Players tab tracks its own
         // captured-original state. Mirrors how the Roster tab is isolated
@@ -156,6 +180,7 @@ namespace NBA2k16_Trainer
         private readonly PlayerProfileCheat _playerListProfileCheat = new();
         private readonly RatingsCheat _playerListRatingsCheat = new();
         private readonly BadgesCheat _playerListBadgesCheat = new();
+        private readonly TendenciesCheat _playerListTendenciesCheat = new();
 
         // Currently-loaded player (real roster index). -1 = none selected.
         private int _playerListSelectedRosterIndex = -1;
@@ -228,7 +253,7 @@ namespace NBA2k16_Trainer
 
             _tabs = new TabControl
             {
-                Top = 40, Left = 12, Width = 696, Height = 470,
+                Top = 40, Left = 12, Width = 696, Height = 668,
             };
             Controls.Add(_tabs);
 
@@ -238,35 +263,7 @@ namespace NBA2k16_Trainer
             BuildBadgesTab();
             BuildRosterTab();
             BuildPlayerListTab();
-
-            // ─── Log group spans the bottom ──────────────────────────────────
-            var logGroup = new GroupBox
-            {
-                Text = "Log", Top = 520, Left = 12, Width = 696, Height = 188,
-            };
-            Controls.Add(logGroup);
-
-            _logBox = new TextBox
-            {
-                Top = 22, Left = 12, Width = 672, Height = 130,
-                Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Consolas", 8.75f),
-            };
-            logGroup.Controls.Add(_logBox);
-
-            _clearLogBtn = new Button
-            {
-                Text = "Clear log", Top = 156, Left = 12, Width = 100, Height = 24,
-            };
-            _clearLogBtn.Click += (_, _) => _logBox.Clear();
-            logGroup.Controls.Add(_clearLogBtn);
-
-            _copyLogBtn = new Button
-            {
-                Text = "Copy last 20", Top = 156, Left = 120, Width = 110, Height = 24,
-            };
-            _copyLogBtn.Click += (_, _) => CopyRecentLog(20);
-            logGroup.Controls.Add(_copyLogBtn);
+            BuildLogTab();
 
             _attachTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _attachTimer.Tick += (_, _) => OnTimerTick();
@@ -735,6 +732,13 @@ namespace NBA2k16_Trainer
             _rosterRefreshBtn.Click += (_, _) => RefreshRosterFromGame();
             page.Controls.Add(_rosterRefreshBtn);
 
+            _revertRosterToBaselineBtn = new Button
+            {
+                Text = "Revert to original", Top = 8, Left = 400, Width = 160, Height = 24,
+            };
+            _revertRosterToBaselineBtn.Click += (_, _) => RevertRosterToBaseline();
+            page.Controls.Add(_revertRosterToBaselineBtn);
+
             _rosterStatusLabel = new Label
             {
                 Top = 38, Left = 8, Width = 672, Height = 18,
@@ -746,7 +750,7 @@ namespace NBA2k16_Trainer
             // ── Body: player list (left) + sub-tabs (right) ─────────────────
             _rosterPlayerList = new ListBox
             {
-                Top = 60, Left = 8, Width = 180, Height = 372,
+                Top = 60, Left = 8, Width = 180, Height = 560,
                 IntegralHeight = false,
             };
             _rosterPlayerList.SelectedIndexChanged += (_, _) => OnRosterPlayerSelected();
@@ -754,17 +758,18 @@ namespace NBA2k16_Trainer
 
             _rosterSubTabs = new TabControl
             {
-                Top = 60, Left = 192, Width = 488, Height = 372,
+                Top = 60, Left = 192, Width = 488, Height = 560,
             };
             page.Controls.Add(_rosterSubTabs);
 
             BuildRosterProfileSubPage();
             BuildRosterRatingsSubPage();
             BuildRosterBadgesSubPage();
+            BuildRosterTendenciesSubPage();
 
             page.Controls.Add(new Label
             {
-                Top = 436, Left = 8, Width = 672, Height = 16,
+                Top = 624, Left = 8, Width = 672, Height = 18,
                 Text = "Edits write to the in-memory roster table. Use Options → Roster → Save in-game to persist across launches.",
                 ForeColor = Color.DimGray,
             });
@@ -890,7 +895,7 @@ namespace NBA2k16_Trainer
 
             var scroll = new Panel
             {
-                Top = 40, Left = 8, Width = 464, Height = 252,
+                Top = 40, Left = 8, Width = 464, Height = 440,
                 AutoScroll = true,
                 BorderStyle = BorderStyle.FixedSingle,
             };
@@ -928,14 +933,14 @@ namespace NBA2k16_Trainer
 
             _applyRosterRatingsBtn = new Button
             {
-                Text = "Apply ratings", Top = 300, Left = 8, Width = 130, Height = 32,
+                Text = "Apply ratings", Top = 510, Left = 8, Width = 130, Height = 32,
             };
             _applyRosterRatingsBtn.Click += (_, _) => ApplyRosterRatings();
             page.Controls.Add(_applyRosterRatingsBtn);
 
             _revertRosterRatingsBtn = new Button
             {
-                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
             };
             _revertRosterRatingsBtn.Click += (_, _) => RevertRosterRatings();
             page.Controls.Add(_revertRosterRatingsBtn);
@@ -948,7 +953,7 @@ namespace NBA2k16_Trainer
 
             var scroll = new Panel
             {
-                Top = 8, Left = 8, Width = 464, Height = 284,
+                Top = 8, Left = 8, Width = 464, Height = 470,
                 AutoScroll = true,
                 BorderStyle = BorderStyle.FixedSingle,
             };
@@ -992,17 +997,105 @@ namespace NBA2k16_Trainer
 
             _applyRosterBadgesBtn = new Button
             {
-                Text = "Apply badges", Top = 300, Left = 8, Width = 130, Height = 32,
+                Text = "Apply badges", Top = 510, Left = 8, Width = 130, Height = 32,
             };
             _applyRosterBadgesBtn.Click += (_, _) => ApplyRosterBadges();
             page.Controls.Add(_applyRosterBadgesBtn);
 
             _revertRosterBadgesBtn = new Button
             {
-                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
             };
             _revertRosterBadgesBtn.Click += (_, _) => RevertRosterBadges();
             page.Controls.Add(_revertRosterBadgesBtn);
+
+            _maxAllRosterBadgesBtn = new Button
+            {
+                Text = "Max all", Top = 510, Left = 324, Width = 130, Height = 32,
+            };
+            _maxAllRosterBadgesBtn.Click += (_, _) => MaxAllRosterBadges();
+            page.Controls.Add(_maxAllRosterBadgesBtn);
+        }
+
+        private void BuildRosterTendenciesSubPage()
+        {
+            var page = new TabPage("Tendencies");
+            _rosterSubTabs.TabPages.Add(page);
+
+            page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
+            _rosterTendencyOverrideBox = new NumericUpDown
+            {
+                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 100, Value = 50,
+            };
+            page.Controls.Add(_rosterTendencyOverrideBox);
+
+            _rosterTendencyApplyOverrideBtn = new Button
+            {
+                Text = "Fill all", Top = 7, Left = 195, Width = 80, Height = 24,
+            };
+            _rosterTendencyApplyOverrideBtn.Click += (_, _) =>
+            {
+                foreach (var box in _rosterTendencyBoxes.Values)
+                    box.Value = (byte)_rosterTendencyOverrideBox.Value;
+            };
+            page.Controls.Add(_rosterTendencyApplyOverrideBtn);
+
+            var scroll = new Panel
+            {
+                Top = 40, Left = 8, Width = 464, Height = 440,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            // Preserve first-occurrence order so the in-editor tab order
+            // (Jump Shooting first) is mirrored here instead of alphabetical.
+            var groups = TendenciesCheat.Tendencies
+                .Select((t, i) => new { t, i })
+                .GroupBy(x => x.t.Group)
+                .OrderBy(g => g.First().i)
+                .Select(g => new { Key = g.Key, Items = g.Select(x => x.t).ToList() })
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var t in grp.Items)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = t.Name + ":", Top = innerTop + 3, Left = 8, Width = 240,
+                        AutoEllipsis = true,
+                    });
+                    var num = new NumericUpDown
+                    {
+                        Top = innerTop, Left = 252, Width = 70,
+                        Minimum = 0, Maximum = 100, Value = 0,
+                    };
+                    _rosterTendencyBoxes[t.Name] = num;
+                    gb.Controls.Add(num);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyRosterTendenciesBtn = new Button
+            {
+                Text = "Apply tendencies", Top = 510, Left = 8, Width = 130, Height = 32,
+            };
+            _applyRosterTendenciesBtn.Click += (_, _) => ApplyRosterTendencies();
+            page.Controls.Add(_applyRosterTendenciesBtn);
+
+            _revertRosterTendenciesBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
+            };
+            _revertRosterTendenciesBtn.Click += (_, _) => RevertRosterTendencies();
+            page.Controls.Add(_revertRosterTendenciesBtn);
         }
 
         private void BuildPlayerListTab()
@@ -1026,6 +1119,13 @@ namespace NBA2k16_Trainer
             _playerListRefreshBtn.Click += (_, _) => RefreshPlayerListFromGame();
             page.Controls.Add(_playerListRefreshBtn);
 
+            _revertPlayerListToBaselineBtn = new Button
+            {
+                Text = "Revert to original", Top = 8, Left = 400, Width = 160, Height = 24,
+            };
+            _revertPlayerListToBaselineBtn.Click += (_, _) => RevertPlayerListToBaseline();
+            page.Controls.Add(_revertPlayerListToBaselineBtn);
+
             _playerListStatusLabel = new Label
             {
                 Top = 38, Left = 8, Width = 672, Height = 18,
@@ -1037,7 +1137,7 @@ namespace NBA2k16_Trainer
             // ── Body: list (left) + sub-tabs (right) ──────────────────────
             _playerListListBox = new ListBox
             {
-                Top = 60, Left = 8, Width = 180, Height = 372,
+                Top = 60, Left = 8, Width = 180, Height = 560,
                 IntegralHeight = false,
             };
             _playerListListBox.SelectedIndexChanged += (_, _) => OnPlayerListSelected();
@@ -1045,18 +1145,19 @@ namespace NBA2k16_Trainer
 
             _playerListSubTabs = new TabControl
             {
-                Top = 60, Left = 192, Width = 488, Height = 372,
+                Top = 60, Left = 192, Width = 488, Height = 560,
             };
             page.Controls.Add(_playerListSubTabs);
 
             BuildPlayerListProfileSubPage();
             BuildPlayerListRatingsSubPage();
             BuildPlayerListBadgesSubPage();
+            BuildPlayerListTendenciesSubPage();
 
             page.Controls.Add(new Label
             {
-                Top = 436, Left = 8, Width = 672, Height = 16,
-                Text = "Your MyPlayer isn't here (he's heap-resident — edit via the Profile/Ratings/Badges tabs).",
+                Top = 624, Left = 8, Width = 672, Height = 18,
+                Text = "Your MyPlayer isn't here (he's heap-resident — edit via the Profile/Ratings/Badges tabs at top).",
                 ForeColor = Color.DimGray,
             });
         }
@@ -1176,7 +1277,7 @@ namespace NBA2k16_Trainer
 
             var scroll = new Panel
             {
-                Top = 40, Left = 8, Width = 464, Height = 252,
+                Top = 40, Left = 8, Width = 464, Height = 440,
                 AutoScroll = true,
                 BorderStyle = BorderStyle.FixedSingle,
             };
@@ -1214,14 +1315,14 @@ namespace NBA2k16_Trainer
 
             _applyPlayerListRatingsBtn = new Button
             {
-                Text = "Apply ratings", Top = 300, Left = 8, Width = 130, Height = 32,
+                Text = "Apply ratings", Top = 510, Left = 8, Width = 130, Height = 32,
             };
             _applyPlayerListRatingsBtn.Click += (_, _) => ApplyPlayerListRatings();
             page.Controls.Add(_applyPlayerListRatingsBtn);
 
             _revertPlayerListRatingsBtn = new Button
             {
-                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
             };
             _revertPlayerListRatingsBtn.Click += (_, _) => RevertPlayerListRatings();
             page.Controls.Add(_revertPlayerListRatingsBtn);
@@ -1234,7 +1335,7 @@ namespace NBA2k16_Trainer
 
             var scroll = new Panel
             {
-                Top = 8, Left = 8, Width = 464, Height = 284,
+                Top = 8, Left = 8, Width = 464, Height = 470,
                 AutoScroll = true,
                 BorderStyle = BorderStyle.FixedSingle,
             };
@@ -1278,17 +1379,131 @@ namespace NBA2k16_Trainer
 
             _applyPlayerListBadgesBtn = new Button
             {
-                Text = "Apply badges", Top = 300, Left = 8, Width = 130, Height = 32,
+                Text = "Apply badges", Top = 510, Left = 8, Width = 130, Height = 32,
             };
             _applyPlayerListBadgesBtn.Click += (_, _) => ApplyPlayerListBadges();
             page.Controls.Add(_applyPlayerListBadgesBtn);
 
             _revertPlayerListBadgesBtn = new Button
             {
-                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
             };
             _revertPlayerListBadgesBtn.Click += (_, _) => RevertPlayerListBadges();
             page.Controls.Add(_revertPlayerListBadgesBtn);
+
+            _maxAllPlayerListBadgesBtn = new Button
+            {
+                Text = "Max all", Top = 510, Left = 324, Width = 130, Height = 32,
+            };
+            _maxAllPlayerListBadgesBtn.Click += (_, _) => MaxAllPlayerListBadges();
+            page.Controls.Add(_maxAllPlayerListBadgesBtn);
+        }
+
+        private void BuildPlayerListTendenciesSubPage()
+        {
+            var page = new TabPage("Tendencies");
+            _playerListSubTabs.TabPages.Add(page);
+
+            page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
+            _playerListTendencyOverrideBox = new NumericUpDown
+            {
+                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 100, Value = 50,
+            };
+            page.Controls.Add(_playerListTendencyOverrideBox);
+
+            _playerListTendencyApplyOverrideBtn = new Button
+            {
+                Text = "Fill all", Top = 7, Left = 195, Width = 80, Height = 24,
+            };
+            _playerListTendencyApplyOverrideBtn.Click += (_, _) =>
+            {
+                foreach (var box in _playerListTendencyBoxes.Values)
+                    box.Value = (byte)_playerListTendencyOverrideBox.Value;
+            };
+            page.Controls.Add(_playerListTendencyApplyOverrideBtn);
+
+            var scroll = new Panel
+            {
+                Top = 40, Left = 8, Width = 464, Height = 440,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            var groups = TendenciesCheat.Tendencies
+                .Select((t, i) => new { t, i })
+                .GroupBy(x => x.t.Group)
+                .OrderBy(g => g.First().i)
+                .Select(g => new { Key = g.Key, Items = g.Select(x => x.t).ToList() })
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var t in grp.Items)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = t.Name + ":", Top = innerTop + 3, Left = 8, Width = 240,
+                        AutoEllipsis = true,
+                    });
+                    var num = new NumericUpDown
+                    {
+                        Top = innerTop, Left = 252, Width = 70,
+                        Minimum = 0, Maximum = 100, Value = 0,
+                    };
+                    _playerListTendencyBoxes[t.Name] = num;
+                    gb.Controls.Add(num);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyPlayerListTendenciesBtn = new Button
+            {
+                Text = "Apply tendencies", Top = 510, Left = 8, Width = 130, Height = 32,
+            };
+            _applyPlayerListTendenciesBtn.Click += (_, _) => ApplyPlayerListTendencies();
+            page.Controls.Add(_applyPlayerListTendenciesBtn);
+
+            _revertPlayerListTendenciesBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 510, Left = 146, Width = 170, Height = 32,
+            };
+            _revertPlayerListTendenciesBtn.Click += (_, _) => RevertPlayerListTendencies();
+            page.Controls.Add(_revertPlayerListTendenciesBtn);
+        }
+
+        private void BuildLogTab()
+        {
+            var page = new TabPage("Log");
+            _tabs.TabPages.Add(page);
+
+            _logBox = new TextBox
+            {
+                Top = 8, Left = 8, Width = 672, Height = 590,
+                Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+                Font = new Font("Consolas", 8.75f),
+            };
+            page.Controls.Add(_logBox);
+
+            _clearLogBtn = new Button
+            {
+                Text = "Clear log", Top = 608, Left = 8, Width = 100, Height = 28,
+            };
+            _clearLogBtn.Click += (_, _) => _logBox.Clear();
+            page.Controls.Add(_clearLogBtn);
+
+            _copyLogBtn = new Button
+            {
+                Text = "Copy last 20", Top = 608, Left = 116, Width = 110, Height = 28,
+            };
+            _copyLogBtn.Click += (_, _) => CopyRecentLog(20);
+            page.Controls.Add(_copyLogBtn);
         }
 
         // ─── Lifecycle ──────────────────────────────────────────────────────
@@ -1429,6 +1644,7 @@ namespace NBA2k16_Trainer
                 {
                     InitializePlayerListFromGame(session);
                     SetPlayerListSearchControlsEnabled(true);
+                    InitializeBaselineStore(session);
                 }
             }
             catch (Exception ex)
@@ -1460,6 +1676,7 @@ namespace NBA2k16_Trainer
             _rosterProfileCheat.ResetCapturedState();
             _rosterRatingsCheat.ResetCapturedState();
             _rosterBadgesCheat.ResetCapturedState();
+            _rosterTendenciesCheat.ResetCapturedState();
             _rosterSelectedIndex = -1;
             _rosterSuppressEvents = true;
             try
@@ -1474,9 +1691,12 @@ namespace NBA2k16_Trainer
             _playerListProfileCheat.ResetCapturedState();
             _playerListRatingsCheat.ResetCapturedState();
             _playerListBadgesCheat.ResetCapturedState();
+            _playerListTendenciesCheat.ResetCapturedState();
             _playerListSelectedRosterIndex = -1;
             _playerListAllLabels = Array.Empty<string>();
             _playerListVisibleIndices = Array.Empty<int>();
+
+            _baselineStore.Reset();
             _playerListSuppressEvents = true;
             try
             {
@@ -1905,6 +2125,7 @@ namespace NBA2k16_Trainer
                 _rosterProfileCheat.ResetCapturedState();
                 _rosterRatingsCheat.ResetCapturedState();
                 _rosterBadgesCheat.ResetCapturedState();
+                _rosterTendenciesCheat.ResetCapturedState();
                 _rosterSelectedIndex = -1;
                 InitializeRosterFromGame(session);
             }
@@ -1983,15 +2204,18 @@ namespace NBA2k16_Trainer
                     _rosterProfileCheat.ResetCapturedState();
                     _rosterRatingsCheat.ResetCapturedState();
                     _rosterBadgesCheat.ResetCapturedState();
+                    _rosterTendenciesCheat.ResetCapturedState();
 
                     IntPtr playerBase = _rosterResolver.GetPlayer(rosterIndex);
                     var profile = _rosterProfileCheat.Probe(session, playerBase);
                     var ratings = _rosterRatingsCheat.Probe(session, playerBase);
                     var badges = _rosterBadgesCheat.Probe(session, playerBase);
+                    var tendencies = _rosterTendenciesCheat.Probe(session, playerBase);
 
                     PopulateRosterProfileInputs(profile);
                     PopulateRosterRatingInputs(ratings);
                     PopulateRosterBadgeInputs(badges);
+                    PopulateRosterTendencyInputs(tendencies);
 
                     _rosterSelectedIndex = rosterIndex;
                     SetRosterPlayerControlsEnabled(true);
@@ -2145,6 +2369,58 @@ namespace NBA2k16_Trainer
             }
         }
 
+        /// <summary>Fills every Roster-tab badge combo to its max tier. User applies separately.</summary>
+        private void MaxAllRosterBadges()
+        {
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_rosterBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                int maxIndex = Math.Min((int)BadgesCheat.MaxTierFor(b), combo.Items.Count - 1);
+                combo.SelectedIndex = maxIndex;
+            }
+        }
+
+        private void ApplyRosterTendencies()
+        {
+            if (_rosterSelectedIndex < 0) { Log("No roster player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadRosterTendenciesFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterTendenciesCheat.Apply(session, playerBase, desired);
+                    Log($"Roster tendencies written for index {_rosterSelectedIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster tendencies apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertRosterTendencies()
+        {
+            if (_rosterSelectedIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterTendenciesCheat.Revert(session, playerBase);
+                    if (_rosterTendenciesCheat.Original is { } original)
+                        PopulateRosterTendencyInputs(original);
+                    Log($"Roster tendencies reverted for index {_rosterSelectedIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster tendencies revert failed: " + ex.Message);
+                }
+            }
+        }
+
         // ─── Roster: input <-> snapshot glue ────────────────────────────────
 
         private void PopulateRosterProfileInputs(PlayerProfileSnapshot snap)
@@ -2194,6 +2470,22 @@ namespace NBA2k16_Trainer
         {
             var dict = new Dictionary<string, byte>(_rosterRatingBoxes.Count);
             foreach (var kv in _rosterRatingBoxes) dict[kv.Key] = (byte)kv.Value.Value;
+            return dict;
+        }
+
+        private void PopulateRosterTendencyInputs(Dictionary<string, byte> values)
+        {
+            foreach (var kv in values)
+            {
+                if (_rosterTendencyBoxes.TryGetValue(kv.Key, out var box))
+                    box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
+            }
+        }
+
+        private Dictionary<string, byte> ReadRosterTendenciesFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_rosterTendencyBoxes.Count);
+            foreach (var kv in _rosterTendencyBoxes) dict[kv.Key] = (byte)kv.Value.Value;
             return dict;
         }
 
@@ -2261,6 +2553,170 @@ namespace NBA2k16_Trainer
             foreach (var combo in _rosterBadgeBoxes.Values) combo.Enabled = enabled;
             _applyRosterBadgesBtn.Enabled = enabled;
             _revertRosterBadgesBtn.Enabled = enabled;
+            _maxAllRosterBadgesBtn.Enabled = enabled;
+
+            foreach (var box in _rosterTendencyBoxes.Values) box.Enabled = enabled;
+            _rosterTendencyOverrideBox.Enabled = enabled;
+            _rosterTendencyApplyOverrideBtn.Enabled = enabled;
+            _applyRosterTendenciesBtn.Enabled = enabled;
+            _revertRosterTendenciesBtn.Enabled = enabled;
+
+            _revertRosterToBaselineBtn.Enabled = enabled;
+        }
+
+        // ─── Baseline store (per-player "revert to original") ──────────────
+
+        private void InitializeBaselineStore(ProcessSession session)
+        {
+            string path = RosterBaselineStore.DefaultPath;
+            if (File.Exists(path) && _baselineStore.TryLoad(path))
+            {
+                Log($"Baseline loaded from {path}: {_baselineStore.PlayerCount} players, captured {_baselineStore.CapturedAt:yyyy-MM-dd HH:mm} UTC.");
+                return;
+            }
+
+            try
+            {
+                _baselineStore.Capture(session, _rosterResolver);
+                _baselineStore.Save(path);
+                Log($"Baseline captured ({_baselineStore.PlayerCount} players) and saved to {path}.");
+            }
+            catch (Exception ex)
+            {
+                Log("Baseline capture/save failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Writes the captured baseline bytes back to a player's memory and
+        /// re-probes the cheat snapshots so all three sub-tabs (profile,
+        /// ratings, badges) show the restored state. Tab-agnostic — caller
+        /// passes the right resolver/cheats/populate-fns.
+        /// </summary>
+        private bool RevertPlayerToBaseline(
+            int rosterIndex,
+            PlayerProfileCheat profileCheat,
+            RatingsCheat ratingsCheat,
+            BadgesCheat badgesCheat,
+            TendenciesCheat tendenciesCheat,
+            Action<PlayerProfileSnapshot> populateProfile,
+            Action<Dictionary<string, byte>> populateRatings,
+            Action<Dictionary<string, byte>> populateBadges,
+            Action<Dictionary<string, byte>> populateTendencies,
+            string tabLabel)
+        {
+            byte[]? raw = _baselineStore.GetBaselineFor(rosterIndex);
+            if (raw is null)
+            {
+                Log($"{tabLabel}: no baseline snapshot for index {rosterIndex} — nothing to revert to.");
+                return false;
+            }
+            if (!TryGetSession(out var session) || session is null) return false;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(rosterIndex);
+                    session.WriteBytes(playerBase, raw);
+
+                    // Phys-attrs (height, wingspan, body length, shoulder width)
+                    // lives in a separate sub-buffer pointed to by +0x80. The
+                    // bytes we just wrote restored the pointer (unchanged for
+                    // static-roster records), so deref it now and write the
+                    // captured phys bytes if we have them.
+                    byte[]? phys = _baselineStore.GetPhysBaselineFor(rosterIndex);
+                    if (phys is not null)
+                    {
+                        try
+                        {
+                            IntPtr physPtr = PlayerStructIO.ReadPhysAttrsPtr(session, playerBase);
+                            if (physPtr != IntPtr.Zero)
+                                session.WriteBytes(physPtr, phys);
+                        }
+                        catch
+                        {
+                            // Phys write failed; player record still reverted.
+                        }
+                    }
+
+                    // Drop captured originals so subsequent "Revert to load-time"
+                    // restores to the baseline rather than to whatever the user
+                    // had edited before this baseline-revert.
+                    profileCheat.ResetCapturedState();
+                    ratingsCheat.ResetCapturedState();
+                    badgesCheat.ResetCapturedState();
+                    tendenciesCheat.ResetCapturedState();
+
+                    var profile = profileCheat.Probe(session, playerBase);
+                    var ratings = ratingsCheat.Probe(session, playerBase);
+                    var badges = badgesCheat.Probe(session, playerBase);
+                    var tendencies = tendenciesCheat.Probe(session, playerBase);
+
+                    populateProfile(profile);
+                    populateRatings(ratings);
+                    populateBadges(badges);
+                    populateTendencies(tendencies);
+
+                    Log($"{tabLabel}: reverted index {rosterIndex} to original "
+                        + $"({profile.FirstName} {profile.LastName}).");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Log($"{tabLabel}: revert-to-baseline failed: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
+        private void RevertPlayerListToBaseline()
+        {
+            if (_playerListSelectedRosterIndex < 0) { Log("No player selected."); return; }
+            if (RevertPlayerToBaseline(
+                _playerListSelectedRosterIndex,
+                _playerListProfileCheat, _playerListRatingsCheat, _playerListBadgesCheat,
+                _playerListTendenciesCheat,
+                PopulatePlayerListProfileInputs,
+                PopulatePlayerListRatingInputs,
+                PopulatePlayerListBadgeInputs,
+                PopulatePlayerListTendencyInputs,
+                "Players-tab"))
+            {
+                // Name may have reverted; rebuild the visible label so the list
+                // shows the original name again.
+                if (TryGetSession(out var session) && session is not null)
+                {
+                    using (session)
+                    {
+                        var live = _playerListProfileCheat.Read(session, _rosterResolver.GetPlayer(_playerListSelectedRosterIndex));
+                        UpdatePlayerListLabelForCurrentSelection(session, live);
+                    }
+                }
+            }
+        }
+
+        private void RevertRosterToBaseline()
+        {
+            if (_rosterSelectedIndex < 0) { Log("No player selected."); return; }
+            if (RevertPlayerToBaseline(
+                _rosterSelectedIndex,
+                _rosterProfileCheat, _rosterRatingsCheat, _rosterBadgesCheat,
+                _rosterTendenciesCheat,
+                PopulateRosterProfileInputs,
+                PopulateRosterRatingInputs,
+                PopulateRosterBadgeInputs,
+                PopulateRosterTendencyInputs,
+                "Roster-tab"))
+            {
+                if (TryGetSession(out var session) && session is not null)
+                {
+                    using (session)
+                    {
+                        var live = _rosterProfileCheat.Read(session, _rosterResolver.GetPlayer(_rosterSelectedIndex));
+                        RefreshRosterPlayerLabel(live);
+                    }
+                }
+            }
         }
 
         // ─── Players tab actions ────────────────────────────────────────────
@@ -2295,6 +2751,7 @@ namespace NBA2k16_Trainer
                 _playerListProfileCheat.ResetCapturedState();
                 _playerListRatingsCheat.ResetCapturedState();
                 _playerListBadgesCheat.ResetCapturedState();
+                _playerListTendenciesCheat.ResetCapturedState();
                 _playerListSelectedRosterIndex = -1;
                 InitializePlayerListFromGame(session);
             }
@@ -2375,8 +2832,8 @@ namespace NBA2k16_Trainer
             finally { _playerListSuppressEvents = false; }
 
             _playerListStatusLabel.Text = hasFilter
-                ? $"Showing {visible.Count} of {total} players matching \"{needle}\". (Your MyPlayer isn't in this list.)"
-                : $"Showing {total} of {total} players. (Your MyPlayer isn't in this list — edit him via the MyPlayer tabs.)";
+                ? $"Showing {visible.Count} of {total} players matching \"{needle}\". Click a name, then use the Profile / Ratings / Badges sub-tabs."
+                : $"Showing {total} of {total} players. Click a name, then use the Profile / Ratings / Badges sub-tabs to edit.";
 
             _playerListSelectedRosterIndex = -1;
             SetPlayerListPlayerControlsEnabled(false);
@@ -2400,15 +2857,18 @@ namespace NBA2k16_Trainer
                     _playerListProfileCheat.ResetCapturedState();
                     _playerListRatingsCheat.ResetCapturedState();
                     _playerListBadgesCheat.ResetCapturedState();
+                    _playerListTendenciesCheat.ResetCapturedState();
 
                     IntPtr playerBase = _rosterResolver.GetPlayer(rosterIndex);
                     var profile = _playerListProfileCheat.Probe(session, playerBase);
                     var ratings = _playerListRatingsCheat.Probe(session, playerBase);
                     var badges = _playerListBadgesCheat.Probe(session, playerBase);
+                    var tendencies = _playerListTendenciesCheat.Probe(session, playerBase);
 
                     PopulatePlayerListProfileInputs(profile);
                     PopulatePlayerListRatingInputs(ratings);
                     PopulatePlayerListBadgeInputs(badges);
+                    PopulatePlayerListTendencyInputs(tendencies);
 
                     _playerListSelectedRosterIndex = rosterIndex;
                     SetPlayerListPlayerControlsEnabled(true);
@@ -2555,6 +3015,62 @@ namespace NBA2k16_Trainer
             }
         }
 
+        /// <summary>
+        /// Fills every badge combo to its maximum tier (Gold for 2-bit, ON for
+        /// 1-bit). Does NOT auto-apply — user clicks "Apply badges" after
+        /// reviewing, matching the Ratings "Fill all" two-step pattern.
+        /// </summary>
+        private void MaxAllPlayerListBadges()
+        {
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_playerListBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                int maxIndex = Math.Min((int)BadgesCheat.MaxTierFor(b), combo.Items.Count - 1);
+                combo.SelectedIndex = maxIndex;
+            }
+        }
+
+        private void ApplyPlayerListTendencies()
+        {
+            if (_playerListSelectedRosterIndex < 0) { Log("No player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadPlayerListTendenciesFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListTendenciesCheat.Apply(session, playerBase, desired);
+                    Log($"Players-tab tendencies written for index {_playerListSelectedRosterIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab tendencies apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertPlayerListTendencies()
+        {
+            if (_playerListSelectedRosterIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListTendenciesCheat.Revert(session, playerBase);
+                    if (_playerListTendenciesCheat.Original is { } original)
+                        PopulatePlayerListTendencyInputs(original);
+                    Log($"Players-tab tendencies reverted for index {_playerListSelectedRosterIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab tendencies revert failed: " + ex.Message);
+                }
+            }
+        }
+
         // ─── Players: input <-> snapshot glue ───────────────────────────────
 
         private void PopulatePlayerListProfileInputs(PlayerProfileSnapshot snap)
@@ -2593,6 +3109,22 @@ namespace NBA2k16_Trainer
                 if (_playerListRatingBoxes.TryGetValue(kv.Key, out var box))
                     box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
             }
+        }
+
+        private void PopulatePlayerListTendencyInputs(Dictionary<string, byte> values)
+        {
+            foreach (var kv in values)
+            {
+                if (_playerListTendencyBoxes.TryGetValue(kv.Key, out var box))
+                    box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
+            }
+        }
+
+        private Dictionary<string, byte> ReadPlayerListTendenciesFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_playerListTendencyBoxes.Count);
+            foreach (var kv in _playerListTendencyBoxes) dict[kv.Key] = (byte)kv.Value.Value;
+            return dict;
         }
 
         private Dictionary<string, byte> ReadPlayerListRatingsFromInputs()
@@ -2669,6 +3201,15 @@ namespace NBA2k16_Trainer
             foreach (var combo in _playerListBadgeBoxes.Values) combo.Enabled = enabled;
             _applyPlayerListBadgesBtn.Enabled = enabled;
             _revertPlayerListBadgesBtn.Enabled = enabled;
+            _maxAllPlayerListBadgesBtn.Enabled = enabled;
+
+            foreach (var box in _playerListTendencyBoxes.Values) box.Enabled = enabled;
+            _playerListTendencyOverrideBox.Enabled = enabled;
+            _playerListTendencyApplyOverrideBtn.Enabled = enabled;
+            _applyPlayerListTendenciesBtn.Enabled = enabled;
+            _revertPlayerListTendenciesBtn.Enabled = enabled;
+
+            _revertPlayerListToBaselineBtn.Enabled = enabled;
         }
 
         // ─── Glue: settings ↔ inputs ────────────────────────────────────────
