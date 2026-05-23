@@ -67,6 +67,37 @@ namespace NBA2k16_Trainer
         private Button _revertBadgesBtn = null!;
         private CheckBox _autoApplyBadgesToggle = null!;
 
+        // Roster tab — picker bar
+        private ComboBox _rosterTeamCombo = null!;
+        private ListBox _rosterPlayerList = null!;
+        private Button _rosterRefreshBtn = null!;
+        private Label _rosterStatusLabel = null!;
+        private TabControl _rosterSubTabs = null!;
+
+        // Roster tab — Profile sub-page
+        private TextBox _rosterFirstNameBox = null!;
+        private TextBox _rosterLastNameBox = null!;
+        private NumericUpDown _rosterJerseyBox = null!;
+        private ComboBox _rosterPrimaryPosBox = null!;
+        private ComboBox _rosterSecondaryPosBox = null!;
+        private NumericUpDown _rosterWeightBox = null!;
+        private NumericUpDown _rosterHeightBox = null!;
+        private NumericUpDown _rosterWingspanBox = null!;
+        private Button _applyRosterProfileBtn = null!;
+        private Button _revertRosterProfileBtn = null!;
+
+        // Roster tab — Ratings sub-page
+        private readonly Dictionary<string, NumericUpDown> _rosterRatingBoxes = new();
+        private NumericUpDown _rosterRatingOverrideBox = null!;
+        private Button _rosterRatingApplyOverrideBtn = null!;
+        private Button _applyRosterRatingsBtn = null!;
+        private Button _revertRosterRatingsBtn = null!;
+
+        // Roster tab — Badges sub-page
+        private readonly Dictionary<string, ComboBox> _rosterBadgeBoxes = new();
+        private Button _applyRosterBadgesBtn = null!;
+        private Button _revertRosterBadgesBtn = null!;
+
         // ─── State ──────────────────────────────────────────────────────────
         private readonly Settings _settings;
         private readonly FloatConstantCheat _maxHeightCheat;
@@ -76,6 +107,64 @@ namespace NBA2k16_Trainer
         private readonly PlayerProfileCheat _profileCheat = new();
         private readonly RatingsCheat _ratingsCheat = new();
         private readonly BadgesCheat _badgesCheat = new();
+
+        // Separate instances so editing a roster player never touches the
+        // MyPlayer-resolver tab state. Same I/O code, different snapshots.
+        private readonly RosterResolver _rosterResolver = new();
+        private readonly PlayerProfileCheat _rosterProfileCheat = new();
+        private readonly RatingsCheat _rosterRatingsCheat = new();
+        private readonly BadgesCheat _rosterBadgesCheat = new();
+
+        // Currently-loaded roster player. -1 means "no player selected".
+        private int _rosterSelectedIndex = -1;
+        private bool _rosterSuppressEvents;
+
+        // ─── Players tab (flat searchable list) ─────────────────────────────
+        private TextBox _playerListSearchBox = null!;
+        private ListBox _playerListListBox = null!;
+        private Button _playerListRefreshBtn = null!;
+        private Label _playerListStatusLabel = null!;
+        private TabControl _playerListSubTabs = null!;
+
+        // Profile sub-page fields
+        private TextBox _playerListFirstNameBox = null!;
+        private TextBox _playerListLastNameBox = null!;
+        private NumericUpDown _playerListJerseyBox = null!;
+        private ComboBox _playerListPrimaryPosBox = null!;
+        private ComboBox _playerListSecondaryPosBox = null!;
+        private NumericUpDown _playerListWeightBox = null!;
+        private NumericUpDown _playerListHeightBox = null!;
+        private NumericUpDown _playerListWingspanBox = null!;
+        private Button _applyPlayerListProfileBtn = null!;
+        private Button _revertPlayerListProfileBtn = null!;
+
+        // Ratings sub-page fields
+        private readonly Dictionary<string, NumericUpDown> _playerListRatingBoxes = new();
+        private NumericUpDown _playerListRatingOverrideBox = null!;
+        private Button _playerListRatingApplyOverrideBtn = null!;
+        private Button _applyPlayerListRatingsBtn = null!;
+        private Button _revertPlayerListRatingsBtn = null!;
+
+        // Badges sub-page fields
+        private readonly Dictionary<string, ComboBox> _playerListBadgeBoxes = new();
+        private Button _applyPlayerListBadgesBtn = null!;
+        private Button _revertPlayerListBadgesBtn = null!;
+
+        // Third independent set of cheats so Players tab tracks its own
+        // captured-original state. Mirrors how the Roster tab is isolated
+        // from the MyPlayer tab.
+        private readonly PlayerProfileCheat _playerListProfileCheat = new();
+        private readonly RatingsCheat _playerListRatingsCheat = new();
+        private readonly BadgesCheat _playerListBadgesCheat = new();
+
+        // Currently-loaded player (real roster index). -1 = none selected.
+        private int _playerListSelectedRosterIndex = -1;
+        // Cached "Last, First — Team" labels, one per roster index.
+        // Built once at attach; search filter projects from this.
+        private string[] _playerListAllLabels = Array.Empty<string>();
+        // ListBox row → real roster index, rebuilt by search filter.
+        private int[] _playerListVisibleIndices = Array.Empty<int>();
+        private bool _playerListSuppressEvents;
 
         private int? _attachedPid;
         private IntPtr _lastPlayerBase = IntPtr.Zero;
@@ -147,6 +236,8 @@ namespace NBA2k16_Trainer
             BuildProfileTab();
             BuildRatingsTab();
             BuildBadgesTab();
+            BuildRosterTab();
+            BuildPlayerListTab();
 
             // ─── Log group spans the bottom ──────────────────────────────────
             var logGroup = new GroupBox
@@ -182,6 +273,10 @@ namespace NBA2k16_Trainer
 
             SetGlobalControlsEnabled(false);
             SetPlayerControlsEnabled(false);
+            SetRosterTeamControlsEnabled(false);
+            SetRosterPlayerControlsEnabled(false);
+            SetPlayerListSearchControlsEnabled(false);
+            SetPlayerListPlayerControlsEnabled(false);
         }
 
         private void BuildHeightsTab()
@@ -618,6 +713,584 @@ namespace NBA2k16_Trainer
             });
         }
 
+        private void BuildRosterTab()
+        {
+            var page = new TabPage("Roster");
+            _tabs.TabPages.Add(page);
+
+            // ── Picker bar: Team + Player dropdowns + Refresh ───────────────
+            page.Controls.Add(new Label { Text = "Team:", Top = 12, Left = 8, Width = 46 });
+            _rosterTeamCombo = new ComboBox
+            {
+                Top = 9, Left = 56, Width = 220,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _rosterTeamCombo.SelectedIndexChanged += (_, _) => OnRosterTeamSelected();
+            page.Controls.Add(_rosterTeamCombo);
+
+            _rosterRefreshBtn = new Button
+            {
+                Text = "Refresh", Top = 8, Left = 290, Width = 100, Height = 24,
+            };
+            _rosterRefreshBtn.Click += (_, _) => RefreshRosterFromGame();
+            page.Controls.Add(_rosterRefreshBtn);
+
+            _rosterStatusLabel = new Label
+            {
+                Top = 38, Left = 8, Width = 672, Height = 18,
+                Text = "Waiting for game attach...",
+                ForeColor = Color.DimGray,
+            };
+            page.Controls.Add(_rosterStatusLabel);
+
+            // ── Body: player list (left) + sub-tabs (right) ─────────────────
+            _rosterPlayerList = new ListBox
+            {
+                Top = 60, Left = 8, Width = 180, Height = 372,
+                IntegralHeight = false,
+            };
+            _rosterPlayerList.SelectedIndexChanged += (_, _) => OnRosterPlayerSelected();
+            page.Controls.Add(_rosterPlayerList);
+
+            _rosterSubTabs = new TabControl
+            {
+                Top = 60, Left = 192, Width = 488, Height = 372,
+            };
+            page.Controls.Add(_rosterSubTabs);
+
+            BuildRosterProfileSubPage();
+            BuildRosterRatingsSubPage();
+            BuildRosterBadgesSubPage();
+
+            page.Controls.Add(new Label
+            {
+                Top = 436, Left = 8, Width = 672, Height = 16,
+                Text = "Edits write to the in-memory roster table. Use Options → Roster → Save in-game to persist across launches.",
+                ForeColor = Color.DimGray,
+            });
+        }
+
+        private void BuildRosterProfileSubPage()
+        {
+            var page = new TabPage("Profile");
+            _rosterSubTabs.TabPages.Add(page);
+
+            var idBox = new GroupBox
+            {
+                Text = "Identity", Top = 8, Left = 8, Width = 464, Height = 130,
+            };
+            page.Controls.Add(idBox);
+
+            idBox.Controls.Add(new Label { Text = "First name:", Top = 28, Left = 8, Width = 80 });
+            _rosterFirstNameBox = new TextBox { Top = 25, Left = 90, Width = 150, MaxLength = 19 };
+            idBox.Controls.Add(_rosterFirstNameBox);
+
+            idBox.Controls.Add(new Label { Text = "Last name:", Top = 60, Left = 8, Width = 80 });
+            _rosterLastNameBox = new TextBox { Top = 57, Left = 90, Width = 150, MaxLength = 17 };
+            idBox.Controls.Add(_rosterLastNameBox);
+
+            idBox.Controls.Add(new Label { Text = "Jersey #:", Top = 28, Left = 252, Width = 60 });
+            _rosterJerseyBox = new NumericUpDown
+            {
+                Top = 25, Left = 320, Width = 60,
+                Minimum = 0, Maximum = 255, Value = 0,
+            };
+            idBox.Controls.Add(_rosterJerseyBox);
+
+            idBox.Controls.Add(new Label { Text = "Primary:", Top = 60, Left = 252, Width = 60 });
+            _rosterPrimaryPosBox = new ComboBox
+            {
+                Top = 57, Left = 320, Width = 70,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _rosterPrimaryPosBox.Items.AddRange(PositionNames.Display.Cast<object>().ToArray());
+            idBox.Controls.Add(_rosterPrimaryPosBox);
+
+            idBox.Controls.Add(new Label { Text = "Secondary:", Top = 92, Left = 252, Width = 60 });
+            _rosterSecondaryPosBox = new ComboBox
+            {
+                Top = 89, Left = 320, Width = 70,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _rosterSecondaryPosBox.Items.AddRange(PositionNames.Display.Cast<object>().ToArray());
+            idBox.Controls.Add(_rosterSecondaryPosBox);
+
+            var bodyBox = new GroupBox
+            {
+                Text = "Body", Top = 148, Left = 8, Width = 464, Height = 100,
+            };
+            page.Controls.Add(bodyBox);
+
+            // Static-roster records have one phys-attrs buffer (the in-module
+            // one), so we expose a single Height/Wingspan pair here. Apply sets
+            // both Height and GameplayHeight in the snapshot to the same value
+            // — PlayerProfileCheat.Write picks GameplayHeight when the indirect
+            // ptr is module-resident, which it always is for static records.
+            bodyBox.Controls.Add(new Label { Text = "Height (cm):", Top = 28, Left = 8, Width = 80 });
+            _rosterHeightBox = new NumericUpDown
+            {
+                Top = 25, Left = 92, Width = 80,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_rosterHeightBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Wingspan:", Top = 28, Left = 184, Width = 70 });
+            _rosterWingspanBox = new NumericUpDown
+            {
+                Top = 25, Left = 258, Width = 80,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_rosterWingspanBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Weight (lbs):", Top = 60, Left = 8, Width = 90 });
+            _rosterWeightBox = new NumericUpDown
+            {
+                Top = 57, Left = 100, Width = 80,
+                Minimum = 50, Maximum = 800, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_rosterWeightBox);
+
+            _applyRosterProfileBtn = new Button
+            {
+                Text = "Apply profile", Top = 260, Left = 8, Width = 130, Height = 32,
+            };
+            _applyRosterProfileBtn.Click += (_, _) => ApplyRosterProfile();
+            page.Controls.Add(_applyRosterProfileBtn);
+
+            _revertRosterProfileBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 260, Left = 146, Width = 170, Height = 32,
+            };
+            _revertRosterProfileBtn.Click += (_, _) => RevertRosterProfile();
+            page.Controls.Add(_revertRosterProfileBtn);
+        }
+
+        private void BuildRosterRatingsSubPage()
+        {
+            var page = new TabPage("Ratings");
+            _rosterSubTabs.TabPages.Add(page);
+
+            page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
+            _rosterRatingOverrideBox = new NumericUpDown
+            {
+                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 99, Value = 99,
+            };
+            page.Controls.Add(_rosterRatingOverrideBox);
+
+            _rosterRatingApplyOverrideBtn = new Button
+            {
+                Text = "Fill all", Top = 7, Left = 195, Width = 80, Height = 24,
+            };
+            _rosterRatingApplyOverrideBtn.Click += (_, _) =>
+            {
+                foreach (var box in _rosterRatingBoxes.Values)
+                    box.Value = (byte)_rosterRatingOverrideBox.Value;
+            };
+            page.Controls.Add(_rosterRatingApplyOverrideBtn);
+
+            var scroll = new Panel
+            {
+                Top = 40, Left = 8, Width = 464, Height = 252,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            var groups = RatingsCheat.Ratings
+                .GroupBy(r => r.Group)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var r in grp)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = r.Name + ":", Top = innerTop + 3, Left = 8, Width = 240,
+                    });
+                    var num = new NumericUpDown
+                    {
+                        Top = innerTop, Left = 252, Width = 70,
+                        Minimum = 0, Maximum = 99, Value = 0,
+                    };
+                    _rosterRatingBoxes[r.Name] = num;
+                    gb.Controls.Add(num);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyRosterRatingsBtn = new Button
+            {
+                Text = "Apply ratings", Top = 300, Left = 8, Width = 130, Height = 32,
+            };
+            _applyRosterRatingsBtn.Click += (_, _) => ApplyRosterRatings();
+            page.Controls.Add(_applyRosterRatingsBtn);
+
+            _revertRosterRatingsBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+            };
+            _revertRosterRatingsBtn.Click += (_, _) => RevertRosterRatings();
+            page.Controls.Add(_revertRosterRatingsBtn);
+        }
+
+        private void BuildRosterBadgesSubPage()
+        {
+            var page = new TabPage("Badges");
+            _rosterSubTabs.TabPages.Add(page);
+
+            var scroll = new Panel
+            {
+                Top = 8, Left = 8, Width = 464, Height = 284,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            string[] tierItems = { "OFF", "Bronze", "Silver", "Gold" };
+            string[] toggleItems = { "OFF", "ON" };
+
+            var groups = BadgesCheat.Badges
+                .GroupBy(b => b.Group)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var b in grp)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = b.Name + ":", Top = innerTop + 3, Left = 8, Width = 260,
+                        AutoEllipsis = true,
+                    });
+                    var combo = new ComboBox
+                    {
+                        Top = innerTop, Left = 272, Width = 90,
+                        DropDownStyle = ComboBoxStyle.DropDownList,
+                    };
+                    combo.Items.AddRange(b.BitLength == 1 ? toggleItems : tierItems);
+                    combo.SelectedIndex = 0;
+                    _rosterBadgeBoxes[b.Name] = combo;
+                    gb.Controls.Add(combo);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyRosterBadgesBtn = new Button
+            {
+                Text = "Apply badges", Top = 300, Left = 8, Width = 130, Height = 32,
+            };
+            _applyRosterBadgesBtn.Click += (_, _) => ApplyRosterBadges();
+            page.Controls.Add(_applyRosterBadgesBtn);
+
+            _revertRosterBadgesBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+            };
+            _revertRosterBadgesBtn.Click += (_, _) => RevertRosterBadges();
+            page.Controls.Add(_revertRosterBadgesBtn);
+        }
+
+        private void BuildPlayerListTab()
+        {
+            var page = new TabPage("Players");
+            _tabs.TabPages.Add(page);
+
+            // ── Top: search box + refresh button ───────────────────────────
+            page.Controls.Add(new Label { Text = "Search:", Top = 12, Left = 8, Width = 50 });
+            _playerListSearchBox = new TextBox
+            {
+                Top = 9, Left = 60, Width = 220,
+            };
+            _playerListSearchBox.TextChanged += (_, _) => OnPlayerListSearchChanged();
+            page.Controls.Add(_playerListSearchBox);
+
+            _playerListRefreshBtn = new Button
+            {
+                Text = "Refresh", Top = 8, Left = 290, Width = 100, Height = 24,
+            };
+            _playerListRefreshBtn.Click += (_, _) => RefreshPlayerListFromGame();
+            page.Controls.Add(_playerListRefreshBtn);
+
+            _playerListStatusLabel = new Label
+            {
+                Top = 38, Left = 8, Width = 672, Height = 18,
+                Text = "Waiting for game attach...",
+                ForeColor = Color.DimGray,
+            };
+            page.Controls.Add(_playerListStatusLabel);
+
+            // ── Body: list (left) + sub-tabs (right) ──────────────────────
+            _playerListListBox = new ListBox
+            {
+                Top = 60, Left = 8, Width = 180, Height = 372,
+                IntegralHeight = false,
+            };
+            _playerListListBox.SelectedIndexChanged += (_, _) => OnPlayerListSelected();
+            page.Controls.Add(_playerListListBox);
+
+            _playerListSubTabs = new TabControl
+            {
+                Top = 60, Left = 192, Width = 488, Height = 372,
+            };
+            page.Controls.Add(_playerListSubTabs);
+
+            BuildPlayerListProfileSubPage();
+            BuildPlayerListRatingsSubPage();
+            BuildPlayerListBadgesSubPage();
+
+            page.Controls.Add(new Label
+            {
+                Top = 436, Left = 8, Width = 672, Height = 16,
+                Text = "Your MyPlayer isn't here (he's heap-resident — edit via the Profile/Ratings/Badges tabs).",
+                ForeColor = Color.DimGray,
+            });
+        }
+
+        private void BuildPlayerListProfileSubPage()
+        {
+            var page = new TabPage("Profile");
+            _playerListSubTabs.TabPages.Add(page);
+
+            var idBox = new GroupBox
+            {
+                Text = "Identity", Top = 8, Left = 8, Width = 464, Height = 130,
+            };
+            page.Controls.Add(idBox);
+
+            idBox.Controls.Add(new Label { Text = "First name:", Top = 28, Left = 8, Width = 80 });
+            _playerListFirstNameBox = new TextBox { Top = 25, Left = 90, Width = 150, MaxLength = 19 };
+            idBox.Controls.Add(_playerListFirstNameBox);
+
+            idBox.Controls.Add(new Label { Text = "Last name:", Top = 60, Left = 8, Width = 80 });
+            _playerListLastNameBox = new TextBox { Top = 57, Left = 90, Width = 150, MaxLength = 17 };
+            idBox.Controls.Add(_playerListLastNameBox);
+
+            idBox.Controls.Add(new Label { Text = "Jersey #:", Top = 28, Left = 252, Width = 60 });
+            _playerListJerseyBox = new NumericUpDown
+            {
+                Top = 25, Left = 320, Width = 60,
+                Minimum = 0, Maximum = 255, Value = 0,
+            };
+            idBox.Controls.Add(_playerListJerseyBox);
+
+            idBox.Controls.Add(new Label { Text = "Primary:", Top = 60, Left = 252, Width = 60 });
+            _playerListPrimaryPosBox = new ComboBox
+            {
+                Top = 57, Left = 320, Width = 70,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _playerListPrimaryPosBox.Items.AddRange(PositionNames.Display.Cast<object>().ToArray());
+            idBox.Controls.Add(_playerListPrimaryPosBox);
+
+            idBox.Controls.Add(new Label { Text = "Secondary:", Top = 92, Left = 252, Width = 60 });
+            _playerListSecondaryPosBox = new ComboBox
+            {
+                Top = 89, Left = 320, Width = 70,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _playerListSecondaryPosBox.Items.AddRange(PositionNames.Display.Cast<object>().ToArray());
+            idBox.Controls.Add(_playerListSecondaryPosBox);
+
+            var bodyBox = new GroupBox
+            {
+                Text = "Body", Top = 148, Left = 8, Width = 464, Height = 100,
+            };
+            page.Controls.Add(bodyBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Height (cm):", Top = 28, Left = 8, Width = 80 });
+            _playerListHeightBox = new NumericUpDown
+            {
+                Top = 25, Left = 92, Width = 80,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_playerListHeightBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Wingspan:", Top = 28, Left = 184, Width = 70 });
+            _playerListWingspanBox = new NumericUpDown
+            {
+                Top = 25, Left = 258, Width = 80,
+                Minimum = 50, Maximum = 350, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_playerListWingspanBox);
+
+            bodyBox.Controls.Add(new Label { Text = "Weight (lbs):", Top = 60, Left = 8, Width = 90 });
+            _playerListWeightBox = new NumericUpDown
+            {
+                Top = 57, Left = 100, Width = 80,
+                Minimum = 50, Maximum = 800, DecimalPlaces = 2, Increment = 1m,
+            };
+            bodyBox.Controls.Add(_playerListWeightBox);
+
+            _applyPlayerListProfileBtn = new Button
+            {
+                Text = "Apply profile", Top = 260, Left = 8, Width = 130, Height = 32,
+            };
+            _applyPlayerListProfileBtn.Click += (_, _) => ApplyPlayerListProfile();
+            page.Controls.Add(_applyPlayerListProfileBtn);
+
+            _revertPlayerListProfileBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 260, Left = 146, Width = 170, Height = 32,
+            };
+            _revertPlayerListProfileBtn.Click += (_, _) => RevertPlayerListProfile();
+            page.Controls.Add(_revertPlayerListProfileBtn);
+        }
+
+        private void BuildPlayerListRatingsSubPage()
+        {
+            var page = new TabPage("Ratings");
+            _playerListSubTabs.TabPages.Add(page);
+
+            page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
+            _playerListRatingOverrideBox = new NumericUpDown
+            {
+                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 99, Value = 99,
+            };
+            page.Controls.Add(_playerListRatingOverrideBox);
+
+            _playerListRatingApplyOverrideBtn = new Button
+            {
+                Text = "Fill all", Top = 7, Left = 195, Width = 80, Height = 24,
+            };
+            _playerListRatingApplyOverrideBtn.Click += (_, _) =>
+            {
+                foreach (var box in _playerListRatingBoxes.Values)
+                    box.Value = (byte)_playerListRatingOverrideBox.Value;
+            };
+            page.Controls.Add(_playerListRatingApplyOverrideBtn);
+
+            var scroll = new Panel
+            {
+                Top = 40, Left = 8, Width = 464, Height = 252,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            var groups = RatingsCheat.Ratings
+                .GroupBy(r => r.Group)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var r in grp)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = r.Name + ":", Top = innerTop + 3, Left = 8, Width = 240,
+                    });
+                    var num = new NumericUpDown
+                    {
+                        Top = innerTop, Left = 252, Width = 70,
+                        Minimum = 0, Maximum = 99, Value = 0,
+                    };
+                    _playerListRatingBoxes[r.Name] = num;
+                    gb.Controls.Add(num);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyPlayerListRatingsBtn = new Button
+            {
+                Text = "Apply ratings", Top = 300, Left = 8, Width = 130, Height = 32,
+            };
+            _applyPlayerListRatingsBtn.Click += (_, _) => ApplyPlayerListRatings();
+            page.Controls.Add(_applyPlayerListRatingsBtn);
+
+            _revertPlayerListRatingsBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+            };
+            _revertPlayerListRatingsBtn.Click += (_, _) => RevertPlayerListRatings();
+            page.Controls.Add(_revertPlayerListRatingsBtn);
+        }
+
+        private void BuildPlayerListBadgesSubPage()
+        {
+            var page = new TabPage("Badges");
+            _playerListSubTabs.TabPages.Add(page);
+
+            var scroll = new Panel
+            {
+                Top = 8, Left = 8, Width = 464, Height = 284,
+                AutoScroll = true,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            page.Controls.Add(scroll);
+
+            string[] tierItems = { "OFF", "Bronze", "Silver", "Gold" };
+            string[] toggleItems = { "OFF", "ON" };
+
+            var groups = BadgesCheat.Badges
+                .GroupBy(b => b.Group)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int top = 4;
+            foreach (var grp in groups)
+            {
+                var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
+                int innerTop = 22;
+                foreach (var b in grp)
+                {
+                    gb.Controls.Add(new Label
+                    {
+                        Text = b.Name + ":", Top = innerTop + 3, Left = 8, Width = 260,
+                        AutoEllipsis = true,
+                    });
+                    var combo = new ComboBox
+                    {
+                        Top = innerTop, Left = 272, Width = 90,
+                        DropDownStyle = ComboBoxStyle.DropDownList,
+                    };
+                    combo.Items.AddRange(b.BitLength == 1 ? toggleItems : tierItems);
+                    combo.SelectedIndex = 0;
+                    _playerListBadgeBoxes[b.Name] = combo;
+                    gb.Controls.Add(combo);
+                    innerTop += 28;
+                }
+                gb.Height = innerTop + 8;
+                scroll.Controls.Add(gb);
+                top += gb.Height + 6;
+            }
+
+            _applyPlayerListBadgesBtn = new Button
+            {
+                Text = "Apply badges", Top = 300, Left = 8, Width = 130, Height = 32,
+            };
+            _applyPlayerListBadgesBtn.Click += (_, _) => ApplyPlayerListBadges();
+            page.Controls.Add(_applyPlayerListBadgesBtn);
+
+            _revertPlayerListBadgesBtn = new Button
+            {
+                Text = "Revert to load-time", Top = 300, Left = 146, Width = 170, Height = 32,
+            };
+            _revertPlayerListBadgesBtn.Click += (_, _) => RevertPlayerListBadges();
+            page.Controls.Add(_revertPlayerListBadgesBtn);
+        }
+
         // ─── Lifecycle ──────────────────────────────────────────────────────
 
         private void OnFormReady()
@@ -743,6 +1416,20 @@ namespace NBA2k16_Trainer
                     Log("Resolver install failed: " + ex.Message);
                     UpdateStatusLabel();
                 }
+
+                // Map the static roster table — runs independently of the
+                // MyPlayer hook, so even if the hook fails (e.g. a CE script is
+                // holding the bytes) the Roster tab still lights up.
+                InitializeRosterFromGame(session);
+                SetRosterTeamControlsEnabled(_rosterResolver.Initialized);
+
+                // Players tab piggybacks on the resolver — once teams are mapped,
+                // build the flat searchable label cache for the Players tab.
+                if (_rosterResolver.Initialized)
+                {
+                    InitializePlayerListFromGame(session);
+                    SetPlayerListSearchControlsEnabled(true);
+                }
             }
             catch (Exception ex)
             {
@@ -769,8 +1456,43 @@ namespace NBA2k16_Trainer
             _ratingsCheat.ResetCapturedState();
             _badgesCheat.ResetCapturedState();
 
+            _rosterResolver.Reset();
+            _rosterProfileCheat.ResetCapturedState();
+            _rosterRatingsCheat.ResetCapturedState();
+            _rosterBadgesCheat.ResetCapturedState();
+            _rosterSelectedIndex = -1;
+            _rosterSuppressEvents = true;
+            try
+            {
+                _rosterTeamCombo.Items.Clear();
+                _rosterPlayerList.Items.Clear();
+            }
+            finally { _rosterSuppressEvents = false; }
+            _rosterStatusLabel.Text = "Waiting for game attach...";
+            _rosterStatusLabel.ForeColor = Color.DimGray;
+
+            _playerListProfileCheat.ResetCapturedState();
+            _playerListRatingsCheat.ResetCapturedState();
+            _playerListBadgesCheat.ResetCapturedState();
+            _playerListSelectedRosterIndex = -1;
+            _playerListAllLabels = Array.Empty<string>();
+            _playerListVisibleIndices = Array.Empty<int>();
+            _playerListSuppressEvents = true;
+            try
+            {
+                _playerListSearchBox.Text = string.Empty;
+                _playerListListBox.Items.Clear();
+            }
+            finally { _playerListSuppressEvents = false; }
+            _playerListStatusLabel.Text = "Waiting for game attach...";
+            _playerListStatusLabel.ForeColor = Color.DimGray;
+
             SetGlobalControlsEnabled(false);
             SetPlayerControlsEnabled(false);
+            SetRosterTeamControlsEnabled(false);
+            SetRosterPlayerControlsEnabled(false);
+            SetPlayerListSearchControlsEnabled(false);
+            SetPlayerListPlayerControlsEnabled(false);
             UpdateStatusLabel();
         }
 
@@ -1148,6 +1870,805 @@ namespace NBA2k16_Trainer
                 }
             }
             return ok;
+        }
+
+        // ─── Roster tab actions ─────────────────────────────────────────────
+
+        private void InitializeRosterFromGame(ProcessSession session)
+        {
+            try
+            {
+                _rosterResolver.Initialize(session);
+                PopulateRosterTeamDropdown();
+                _rosterStatusLabel.Text =
+                    $"Roster: {_rosterResolver.PlayerCount} players across {_rosterResolver.Teams.Count} teams. "
+                    + "Pick a team to load its players.";
+                _rosterStatusLabel.ForeColor = Color.DarkGreen;
+                Log($"Roster table mapped: base @ 0x{_rosterResolver.ArrayBase.ToInt64():X} "
+                    + $"(+0x{(_rosterResolver.ArrayBase.ToInt64() - session.BaseAddress.ToInt64()):X}), "
+                    + $"{_rosterResolver.PlayerCount} players, {_rosterResolver.Teams.Count} teams.");
+            }
+            catch (Exception ex)
+            {
+                _rosterStatusLabel.Text = "Roster: failed to map table. " + ex.Message;
+                _rosterStatusLabel.ForeColor = Color.Firebrick;
+                Log("Roster init failed: " + ex.Message);
+            }
+        }
+
+        private void RefreshRosterFromGame()
+        {
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                _rosterResolver.Reset();
+                _rosterProfileCheat.ResetCapturedState();
+                _rosterRatingsCheat.ResetCapturedState();
+                _rosterBadgesCheat.ResetCapturedState();
+                _rosterSelectedIndex = -1;
+                InitializeRosterFromGame(session);
+            }
+        }
+
+        private void PopulateRosterTeamDropdown()
+        {
+            _rosterSuppressEvents = true;
+            try
+            {
+                _rosterTeamCombo.Items.Clear();
+                foreach (var team in _rosterResolver.Teams)
+                    _rosterTeamCombo.Items.Add(team.DisplayName);
+                _rosterPlayerList.Items.Clear();
+                if (_rosterTeamCombo.Items.Count > 0)
+                    _rosterTeamCombo.SelectedIndex = 0;
+            }
+            finally
+            {
+                _rosterSuppressEvents = false;
+            }
+
+            OnRosterTeamSelected();
+        }
+
+        private void OnRosterTeamSelected()
+        {
+            if (_rosterSuppressEvents) return;
+            if (!_rosterResolver.Initialized) return;
+            int teamIdx = _rosterTeamCombo.SelectedIndex;
+            if (teamIdx < 0 || teamIdx >= _rosterResolver.Teams.Count) return;
+
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                var team = _rosterResolver.Teams[teamIdx];
+                _rosterSuppressEvents = true;
+                try
+                {
+                    _rosterPlayerList.Items.Clear();
+                    for (int i = 0; i < team.PlayerCount; i++)
+                    {
+                        int rosterIndex = team.FirstRosterIndex + i;
+                        _rosterPlayerList.Items.Add(_rosterResolver.FormatPlayerLabel(session, rosterIndex));
+                    }
+                    if (_rosterPlayerList.Items.Count > 0)
+                        _rosterPlayerList.SelectedIndex = 0;
+                }
+                finally
+                {
+                    _rosterSuppressEvents = false;
+                }
+
+                OnRosterPlayerSelected();
+            }
+        }
+
+        private void OnRosterPlayerSelected()
+        {
+            if (_rosterSuppressEvents) return;
+            if (!_rosterResolver.Initialized) return;
+            int teamIdx = _rosterTeamCombo.SelectedIndex;
+            int slot = _rosterPlayerList.SelectedIndex;
+            if (teamIdx < 0 || slot < 0) return;
+            var team = _rosterResolver.Teams[teamIdx];
+            int rosterIndex = team.FirstRosterIndex + slot;
+            if (rosterIndex < 0 || rosterIndex >= _rosterResolver.PlayerCount) return;
+
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    // Switching player ⇒ drop captured originals so Revert
+                    // restores the new player's load-time values, not the old one's.
+                    _rosterProfileCheat.ResetCapturedState();
+                    _rosterRatingsCheat.ResetCapturedState();
+                    _rosterBadgesCheat.ResetCapturedState();
+
+                    IntPtr playerBase = _rosterResolver.GetPlayer(rosterIndex);
+                    var profile = _rosterProfileCheat.Probe(session, playerBase);
+                    var ratings = _rosterRatingsCheat.Probe(session, playerBase);
+                    var badges = _rosterBadgesCheat.Probe(session, playerBase);
+
+                    PopulateRosterProfileInputs(profile);
+                    PopulateRosterRatingInputs(ratings);
+                    PopulateRosterBadgeInputs(badges);
+
+                    _rosterSelectedIndex = rosterIndex;
+                    SetRosterPlayerControlsEnabled(true);
+                    _rosterStatusLabel.Text =
+                        $"Loaded: {profile.FirstName} {profile.LastName} · "
+                        + $"{PositionNames.Format(profile.PrimaryPosition)} #{profile.Jersey} · "
+                        + $"{profile.Height:F2} cm @ 0x{playerBase.ToInt64():X}";
+                    _rosterStatusLabel.ForeColor = Color.DarkSlateBlue;
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster player load failed: " + ex.Message);
+                    _rosterStatusLabel.Text = "Failed to load player: " + ex.Message;
+                    _rosterStatusLabel.ForeColor = Color.Firebrick;
+                    SetRosterPlayerControlsEnabled(false);
+                }
+            }
+        }
+
+        private void ApplyRosterProfile()
+        {
+            if (_rosterSelectedIndex < 0) { Log("No roster player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadRosterProfileFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterProfileCheat.Apply(session, playerBase, desired);
+
+                    // Refresh combo label since the name may have changed.
+                    var live = _rosterProfileCheat.Read(session, playerBase);
+                    RefreshRosterPlayerLabel(live);
+
+                    Log($"Roster profile written for index {_rosterSelectedIndex}: "
+                        + $"{desired.FirstName} {desired.LastName} · "
+                        + $"{PositionNames.Format(desired.PrimaryPosition)}/{PositionNames.Format(desired.SecondaryPosition)} · "
+                        + $"#{desired.Jersey} · {desired.Height:F2}cm / {desired.Wingspan:F2}cm wing / {desired.Weight:F2}lbs.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster profile apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertRosterProfile()
+        {
+            if (_rosterSelectedIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterProfileCheat.Revert(session, playerBase);
+                    if (_rosterProfileCheat.Original is { } original)
+                    {
+                        PopulateRosterProfileInputs(original);
+                        RefreshRosterPlayerLabel(original);
+                    }
+                    Log($"Roster profile reverted for index {_rosterSelectedIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster profile revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void ApplyRosterRatings()
+        {
+            if (_rosterSelectedIndex < 0) { Log("No roster player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadRosterRatingsFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterRatingsCheat.Apply(session, playerBase, desired);
+                    Log($"Roster ratings written for index {_rosterSelectedIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster ratings apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertRosterRatings()
+        {
+            if (_rosterSelectedIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterRatingsCheat.Revert(session, playerBase);
+                    if (_rosterRatingsCheat.Original is { } original)
+                        PopulateRosterRatingInputs(original);
+                    Log($"Roster ratings reverted for index {_rosterSelectedIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster ratings revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void ApplyRosterBadges()
+        {
+            if (_rosterSelectedIndex < 0) { Log("No roster player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadRosterBadgesFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterBadgesCheat.Apply(session, playerBase, desired);
+                    Log($"Roster badges written for index {_rosterSelectedIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster badges apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertRosterBadges()
+        {
+            if (_rosterSelectedIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_rosterSelectedIndex);
+                    _rosterBadgesCheat.Revert(session, playerBase);
+                    if (_rosterBadgesCheat.Original is { } original)
+                        PopulateRosterBadgeInputs(original);
+                    Log($"Roster badges reverted for index {_rosterSelectedIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Roster badges revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        // ─── Roster: input <-> snapshot glue ────────────────────────────────
+
+        private void PopulateRosterProfileInputs(PlayerProfileSnapshot snap)
+        {
+            _rosterFirstNameBox.Text = snap.FirstName;
+            _rosterLastNameBox.Text = snap.LastName;
+            _rosterPrimaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.PrimaryPosition);
+            _rosterSecondaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.SecondaryPosition);
+            _rosterJerseyBox.Value = Math.Clamp((decimal)snap.Jersey, _rosterJerseyBox.Minimum, _rosterJerseyBox.Maximum);
+            _rosterWeightBox.Value = Math.Clamp((decimal)snap.Weight, _rosterWeightBox.Minimum, _rosterWeightBox.Maximum);
+            _rosterHeightBox.Value = Math.Clamp((decimal)snap.Height, _rosterHeightBox.Minimum, _rosterHeightBox.Maximum);
+            _rosterWingspanBox.Value = Math.Clamp((decimal)snap.Wingspan, _rosterWingspanBox.Minimum, _rosterWingspanBox.Maximum);
+        }
+
+        private PlayerProfileSnapshot ReadRosterProfileFromInputs()
+        {
+            // For static-roster records the phys sub-buffer is module-resident,
+            // so PlayerProfileCheat.Write picks the GameplayHeight branch. Set
+            // both Height and GameplayHeight (same for Wingspan) to the user's
+            // single value so the right one is used regardless of which branch
+            // the write code takes.
+            float height = (float)_rosterHeightBox.Value;
+            float wingspan = (float)_rosterWingspanBox.Value;
+            return new PlayerProfileSnapshot(
+                FirstName: _rosterFirstNameBox.Text,
+                LastName: _rosterLastNameBox.Text,
+                PrimaryPosition: PositionNames.IndexToRaw(Math.Max(0, _rosterPrimaryPosBox.SelectedIndex)),
+                SecondaryPosition: PositionNames.IndexToRaw(Math.Max(0, _rosterSecondaryPosBox.SelectedIndex)),
+                Weight: (float)_rosterWeightBox.Value,
+                Jersey: (byte)_rosterJerseyBox.Value,
+                Height: height,
+                Wingspan: wingspan,
+                GameplayHeight: height,
+                GameplayWingspan: wingspan);
+        }
+
+        private void PopulateRosterRatingInputs(Dictionary<string, byte> values)
+        {
+            foreach (var kv in values)
+            {
+                if (_rosterRatingBoxes.TryGetValue(kv.Key, out var box))
+                    box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
+            }
+        }
+
+        private Dictionary<string, byte> ReadRosterRatingsFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_rosterRatingBoxes.Count);
+            foreach (var kv in _rosterRatingBoxes) dict[kv.Key] = (byte)kv.Value.Value;
+            return dict;
+        }
+
+        private void PopulateRosterBadgeInputs(Dictionary<string, byte> values)
+        {
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_rosterBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                if (!values.TryGetValue(b.Name, out byte v)) continue;
+                int max = combo.Items.Count - 1;
+                combo.SelectedIndex = Math.Clamp(v, 0, max);
+            }
+        }
+
+        private Dictionary<string, byte> ReadRosterBadgesFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_rosterBadgeBoxes.Count);
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_rosterBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                int idx = Math.Max(0, combo.SelectedIndex);
+                dict[b.Name] = (byte)idx;
+            }
+            return dict;
+        }
+
+        private void RefreshRosterPlayerLabel(PlayerProfileSnapshot snap)
+        {
+            int slot = _rosterPlayerList.SelectedIndex;
+            if (slot < 0 || slot >= _rosterPlayerList.Items.Count) return;
+            string label = string.IsNullOrEmpty(snap.LastName) && string.IsNullOrEmpty(snap.FirstName)
+                ? "(empty)"
+                : $"{snap.LastName}, {snap.FirstName}";
+            _rosterSuppressEvents = true;
+            try { _rosterPlayerList.Items[slot] = label; }
+            finally { _rosterSuppressEvents = false; }
+        }
+
+        private void SetRosterTeamControlsEnabled(bool enabled)
+        {
+            _rosterTeamCombo.Enabled = enabled;
+            _rosterPlayerList.Enabled = enabled;
+            _rosterRefreshBtn.Enabled = enabled;
+        }
+
+        private void SetRosterPlayerControlsEnabled(bool enabled)
+        {
+            _rosterFirstNameBox.Enabled = enabled;
+            _rosterLastNameBox.Enabled = enabled;
+            _rosterJerseyBox.Enabled = enabled;
+            _rosterPrimaryPosBox.Enabled = enabled;
+            _rosterSecondaryPosBox.Enabled = enabled;
+            _rosterWeightBox.Enabled = enabled;
+            _rosterHeightBox.Enabled = enabled;
+            _rosterWingspanBox.Enabled = enabled;
+            _applyRosterProfileBtn.Enabled = enabled;
+            _revertRosterProfileBtn.Enabled = enabled;
+
+            foreach (var box in _rosterRatingBoxes.Values) box.Enabled = enabled;
+            _rosterRatingOverrideBox.Enabled = enabled;
+            _rosterRatingApplyOverrideBtn.Enabled = enabled;
+            _applyRosterRatingsBtn.Enabled = enabled;
+            _revertRosterRatingsBtn.Enabled = enabled;
+
+            foreach (var combo in _rosterBadgeBoxes.Values) combo.Enabled = enabled;
+            _applyRosterBadgesBtn.Enabled = enabled;
+            _revertRosterBadgesBtn.Enabled = enabled;
+        }
+
+        // ─── Players tab actions ────────────────────────────────────────────
+
+        private void InitializePlayerListFromGame(ProcessSession session)
+        {
+            if (!_rosterResolver.Initialized)
+            {
+                _playerListStatusLabel.Text = "Players list unavailable — roster not mapped.";
+                _playerListStatusLabel.ForeColor = Color.Firebrick;
+                return;
+            }
+            try
+            {
+                _playerListAllLabels = BuildAllPlayerLabels(session);
+                FilterPlayerList(_playerListSearchBox.Text ?? string.Empty);
+                _playerListStatusLabel.ForeColor = Color.DarkGreen;
+            }
+            catch (Exception ex)
+            {
+                _playerListStatusLabel.Text = "Players list failed to build: " + ex.Message;
+                _playerListStatusLabel.ForeColor = Color.Firebrick;
+                Log("Players list init failed: " + ex.Message);
+            }
+        }
+
+        private void RefreshPlayerListFromGame()
+        {
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                _playerListProfileCheat.ResetCapturedState();
+                _playerListRatingsCheat.ResetCapturedState();
+                _playerListBadgesCheat.ResetCapturedState();
+                _playerListSelectedRosterIndex = -1;
+                InitializePlayerListFromGame(session);
+            }
+        }
+
+        private string[] BuildAllPlayerLabels(ProcessSession session)
+        {
+            int count = _rosterResolver.PlayerCount;
+            var labels = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                labels[i] = BuildPlayerLabel(session, i);
+            }
+            return labels;
+        }
+
+        private string BuildPlayerLabel(ProcessSession session, int rosterIndex)
+        {
+            string playerLabel = _rosterResolver.FormatPlayerLabel(session, rosterIndex);
+            var team = _rosterResolver.FindTeamForPlayer(rosterIndex);
+            // Strip the trailing "(15)" count from the team display since it's
+            // noise per-row; the list shows one player at a time, not the
+            // whole team.
+            string teamName = team?.DisplayName ?? string.Empty;
+            int parenIdx = teamName.LastIndexOf(" (", StringComparison.Ordinal);
+            if (parenIdx > 0) teamName = teamName.Substring(0, parenIdx);
+            return string.IsNullOrEmpty(teamName)
+                ? playerLabel
+                : $"{playerLabel} — {teamName}";  // " — " (em dash)
+        }
+
+        private void OnPlayerListSearchChanged()
+        {
+            if (_playerListSuppressEvents) return;
+            FilterPlayerList(_playerListSearchBox.Text ?? string.Empty);
+        }
+
+        private void FilterPlayerList(string searchText)
+        {
+            int total = _playerListAllLabels.Length;
+            if (total == 0)
+            {
+                _playerListSuppressEvents = true;
+                try
+                {
+                    _playerListListBox.Items.Clear();
+                    _playerListVisibleIndices = Array.Empty<int>();
+                }
+                finally { _playerListSuppressEvents = false; }
+                _playerListStatusLabel.Text = "No players to show.";
+                return;
+            }
+
+            string needle = (searchText ?? string.Empty).Trim();
+            bool hasFilter = needle.Length > 0;
+
+            var visible = new List<int>(total);
+            for (int i = 0; i < total; i++)
+            {
+                string label = _playerListAllLabels[i];
+                if (!hasFilter
+                    || label.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    visible.Add(i);
+                }
+            }
+
+            _playerListSuppressEvents = true;
+            try
+            {
+                _playerListListBox.BeginUpdate();
+                _playerListListBox.Items.Clear();
+                foreach (int idx in visible)
+                    _playerListListBox.Items.Add(_playerListAllLabels[idx]);
+                _playerListListBox.EndUpdate();
+                _playerListVisibleIndices = visible.ToArray();
+            }
+            finally { _playerListSuppressEvents = false; }
+
+            _playerListStatusLabel.Text = hasFilter
+                ? $"Showing {visible.Count} of {total} players matching \"{needle}\". (Your MyPlayer isn't in this list.)"
+                : $"Showing {total} of {total} players. (Your MyPlayer isn't in this list — edit him via the MyPlayer tabs.)";
+
+            _playerListSelectedRosterIndex = -1;
+            SetPlayerListPlayerControlsEnabled(false);
+        }
+
+        private void OnPlayerListSelected()
+        {
+            if (_playerListSuppressEvents) return;
+            int row = _playerListListBox.SelectedIndex;
+            if (row < 0 || row >= _playerListVisibleIndices.Length) return;
+            int rosterIndex = _playerListVisibleIndices[row];
+            if (rosterIndex < 0 || rosterIndex >= _rosterResolver.PlayerCount) return;
+
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    // Drop captured originals so Revert restores the newly-selected
+                    // player's load-time values, not whoever was selected before.
+                    _playerListProfileCheat.ResetCapturedState();
+                    _playerListRatingsCheat.ResetCapturedState();
+                    _playerListBadgesCheat.ResetCapturedState();
+
+                    IntPtr playerBase = _rosterResolver.GetPlayer(rosterIndex);
+                    var profile = _playerListProfileCheat.Probe(session, playerBase);
+                    var ratings = _playerListRatingsCheat.Probe(session, playerBase);
+                    var badges = _playerListBadgesCheat.Probe(session, playerBase);
+
+                    PopulatePlayerListProfileInputs(profile);
+                    PopulatePlayerListRatingInputs(ratings);
+                    PopulatePlayerListBadgeInputs(badges);
+
+                    _playerListSelectedRosterIndex = rosterIndex;
+                    SetPlayerListPlayerControlsEnabled(true);
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab player load failed: " + ex.Message);
+                    SetPlayerListPlayerControlsEnabled(false);
+                }
+            }
+        }
+
+        private void ApplyPlayerListProfile()
+        {
+            if (_playerListSelectedRosterIndex < 0) { Log("No player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadPlayerListProfileFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListProfileCheat.Apply(session, playerBase, desired);
+
+                    // Update the cached label + the ListBox row if the name changed.
+                    var live = _playerListProfileCheat.Read(session, playerBase);
+                    UpdatePlayerListLabelForCurrentSelection(session, live);
+
+                    Log($"Players-tab profile written for index {_playerListSelectedRosterIndex}: "
+                        + $"{desired.FirstName} {desired.LastName} · "
+                        + $"{PositionNames.Format(desired.PrimaryPosition)}/{PositionNames.Format(desired.SecondaryPosition)} · "
+                        + $"#{desired.Jersey} · {desired.Height:F2}cm / {desired.Wingspan:F2}cm wing / {desired.Weight:F2}lbs.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab profile apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertPlayerListProfile()
+        {
+            if (_playerListSelectedRosterIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListProfileCheat.Revert(session, playerBase);
+                    if (_playerListProfileCheat.Original is { } original)
+                    {
+                        PopulatePlayerListProfileInputs(original);
+                        UpdatePlayerListLabelForCurrentSelection(session, original);
+                    }
+                    Log($"Players-tab profile reverted for index {_playerListSelectedRosterIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab profile revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void ApplyPlayerListRatings()
+        {
+            if (_playerListSelectedRosterIndex < 0) { Log("No player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadPlayerListRatingsFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListRatingsCheat.Apply(session, playerBase, desired);
+                    Log($"Players-tab ratings written for index {_playerListSelectedRosterIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab ratings apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertPlayerListRatings()
+        {
+            if (_playerListSelectedRosterIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListRatingsCheat.Revert(session, playerBase);
+                    if (_playerListRatingsCheat.Original is { } original)
+                        PopulatePlayerListRatingInputs(original);
+                    Log($"Players-tab ratings reverted for index {_playerListSelectedRosterIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab ratings revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void ApplyPlayerListBadges()
+        {
+            if (_playerListSelectedRosterIndex < 0) { Log("No player selected."); return; }
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    var desired = ReadPlayerListBadgesFromInputs();
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListBadgesCheat.Apply(session, playerBase, desired);
+                    Log($"Players-tab badges written for index {_playerListSelectedRosterIndex} ({desired.Count} values).");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab badges apply failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void RevertPlayerListBadges()
+        {
+            if (_playerListSelectedRosterIndex < 0) return;
+            if (!TryGetSession(out var session) || session is null) return;
+            using (session)
+            {
+                try
+                {
+                    IntPtr playerBase = _rosterResolver.GetPlayer(_playerListSelectedRosterIndex);
+                    _playerListBadgesCheat.Revert(session, playerBase);
+                    if (_playerListBadgesCheat.Original is { } original)
+                        PopulatePlayerListBadgeInputs(original);
+                    Log($"Players-tab badges reverted for index {_playerListSelectedRosterIndex}.");
+                }
+                catch (Exception ex)
+                {
+                    Log("Players-tab badges revert failed: " + ex.Message);
+                }
+            }
+        }
+
+        // ─── Players: input <-> snapshot glue ───────────────────────────────
+
+        private void PopulatePlayerListProfileInputs(PlayerProfileSnapshot snap)
+        {
+            _playerListFirstNameBox.Text = snap.FirstName;
+            _playerListLastNameBox.Text = snap.LastName;
+            _playerListPrimaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.PrimaryPosition);
+            _playerListSecondaryPosBox.SelectedIndex = PositionNames.RawToIndex(snap.SecondaryPosition);
+            _playerListJerseyBox.Value = Math.Clamp((decimal)snap.Jersey, _playerListJerseyBox.Minimum, _playerListJerseyBox.Maximum);
+            _playerListWeightBox.Value = Math.Clamp((decimal)snap.Weight, _playerListWeightBox.Minimum, _playerListWeightBox.Maximum);
+            _playerListHeightBox.Value = Math.Clamp((decimal)snap.Height, _playerListHeightBox.Minimum, _playerListHeightBox.Maximum);
+            _playerListWingspanBox.Value = Math.Clamp((decimal)snap.Wingspan, _playerListWingspanBox.Minimum, _playerListWingspanBox.Maximum);
+        }
+
+        private PlayerProfileSnapshot ReadPlayerListProfileFromInputs()
+        {
+            float height = (float)_playerListHeightBox.Value;
+            float wingspan = (float)_playerListWingspanBox.Value;
+            return new PlayerProfileSnapshot(
+                FirstName: _playerListFirstNameBox.Text,
+                LastName: _playerListLastNameBox.Text,
+                PrimaryPosition: PositionNames.IndexToRaw(Math.Max(0, _playerListPrimaryPosBox.SelectedIndex)),
+                SecondaryPosition: PositionNames.IndexToRaw(Math.Max(0, _playerListSecondaryPosBox.SelectedIndex)),
+                Weight: (float)_playerListWeightBox.Value,
+                Jersey: (byte)_playerListJerseyBox.Value,
+                Height: height,
+                Wingspan: wingspan,
+                GameplayHeight: height,
+                GameplayWingspan: wingspan);
+        }
+
+        private void PopulatePlayerListRatingInputs(Dictionary<string, byte> values)
+        {
+            foreach (var kv in values)
+            {
+                if (_playerListRatingBoxes.TryGetValue(kv.Key, out var box))
+                    box.Value = Math.Clamp((decimal)kv.Value, box.Minimum, box.Maximum);
+            }
+        }
+
+        private Dictionary<string, byte> ReadPlayerListRatingsFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_playerListRatingBoxes.Count);
+            foreach (var kv in _playerListRatingBoxes) dict[kv.Key] = (byte)kv.Value.Value;
+            return dict;
+        }
+
+        private void PopulatePlayerListBadgeInputs(Dictionary<string, byte> values)
+        {
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_playerListBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                if (!values.TryGetValue(b.Name, out byte v)) continue;
+                int max = combo.Items.Count - 1;
+                combo.SelectedIndex = Math.Clamp(v, 0, max);
+            }
+        }
+
+        private Dictionary<string, byte> ReadPlayerListBadgesFromInputs()
+        {
+            var dict = new Dictionary<string, byte>(_playerListBadgeBoxes.Count);
+            foreach (var b in BadgesCheat.Badges)
+            {
+                if (!_playerListBadgeBoxes.TryGetValue(b.Name, out var combo)) continue;
+                int idx = Math.Max(0, combo.SelectedIndex);
+                dict[b.Name] = (byte)idx;
+            }
+            return dict;
+        }
+
+        private void UpdatePlayerListLabelForCurrentSelection(ProcessSession session, PlayerProfileSnapshot live)
+        {
+            int row = _playerListListBox.SelectedIndex;
+            if (row < 0 || row >= _playerListVisibleIndices.Length) return;
+            int rosterIndex = _playerListVisibleIndices[row];
+            if (rosterIndex < 0 || rosterIndex >= _playerListAllLabels.Length) return;
+
+            string newLabel = BuildPlayerLabel(session, rosterIndex);
+            _playerListAllLabels[rosterIndex] = newLabel;
+
+            _playerListSuppressEvents = true;
+            try { _playerListListBox.Items[row] = newLabel; }
+            finally { _playerListSuppressEvents = false; }
+        }
+
+        private void SetPlayerListSearchControlsEnabled(bool enabled)
+        {
+            _playerListSearchBox.Enabled = enabled;
+            _playerListListBox.Enabled = enabled;
+            _playerListRefreshBtn.Enabled = enabled;
+        }
+
+        private void SetPlayerListPlayerControlsEnabled(bool enabled)
+        {
+            _playerListFirstNameBox.Enabled = enabled;
+            _playerListLastNameBox.Enabled = enabled;
+            _playerListJerseyBox.Enabled = enabled;
+            _playerListPrimaryPosBox.Enabled = enabled;
+            _playerListSecondaryPosBox.Enabled = enabled;
+            _playerListWeightBox.Enabled = enabled;
+            _playerListHeightBox.Enabled = enabled;
+            _playerListWingspanBox.Enabled = enabled;
+            _applyPlayerListProfileBtn.Enabled = enabled;
+            _revertPlayerListProfileBtn.Enabled = enabled;
+
+            foreach (var box in _playerListRatingBoxes.Values) box.Enabled = enabled;
+            _playerListRatingOverrideBox.Enabled = enabled;
+            _playerListRatingApplyOverrideBtn.Enabled = enabled;
+            _applyPlayerListRatingsBtn.Enabled = enabled;
+            _revertPlayerListRatingsBtn.Enabled = enabled;
+
+            foreach (var combo in _playerListBadgeBoxes.Values) combo.Enabled = enabled;
+            _applyPlayerListBadgesBtn.Enabled = enabled;
+            _revertPlayerListBadgesBtn.Enabled = enabled;
         }
 
         // ─── Glue: settings ↔ inputs ────────────────────────────────────────

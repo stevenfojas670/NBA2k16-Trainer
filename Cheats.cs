@@ -306,5 +306,21 @@ namespace NBA2k16_Trainer
         public const int POS_PRIMARY_SHIFT   = 8;
         public const int POS_SECONDARY_SHIFT = 11;
         public const uint POS_MASK = 0x7;
+
+        // ─── Static roster table (lives inside nba2k16.exe .data, PAGE_READWRITE) ─
+        // Discovered 2026-05-22 via CE: ~450 NBA player records baked into the
+        // module, 0x430 bytes per record, sharing the same field layout as the
+        // heap-resident MyPlayer struct. Editing here changes the active in-memory
+        // roster; the user persists with the game's own Options → Roster → Save.
+        //
+        // Anchor: Russell Westbrook's record. The actual array base + total count
+        // are discovered dynamically by RosterResolver.Initialize() walking back
+        // and forward from this anchor.
+        public const long ROSTER_ANCHOR_OFFSET   = 0x70547C0;
+        public const long ROSTER_RECORD_STRIDE   = 0x430;
+
+        // Per-record team-metadata pointer. All players on the same team share
+        // this qword value, which gives us team grouping without parsing names.
+        public const int ROSTER_TEAM_PTR_OFFSET  = 0x50;
     }
 }
