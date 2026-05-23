@@ -131,6 +131,9 @@ namespace NBA2k16_Trainer
 
         public static IntPtr TendenciesBase(IntPtr playerBase) =>
             new IntPtr(playerBase.ToInt64() + GameOffsets.PLAYER_TENDENCIES_OFFSET);
+
+        public static IntPtr StaticRatingsBase(IntPtr playerBase) =>
+            new IntPtr(playerBase.ToInt64() + GameOffsets.PLAYER_STATIC_RATINGS_OFFSET);
     }
 
     /// <summary>

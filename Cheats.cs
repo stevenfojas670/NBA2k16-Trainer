@@ -313,6 +313,24 @@ namespace NBA2k16_Trainer
         public const int PLAYER_TENDENCIES_OFFSET = 0x3C5;
         public const int PLAYER_TENDENCIES_LENGTH = 84;
 
+        // Static roster ratings block. Verified 2026-05-23 by setting every
+        // Attributes-tab slider to a known UI value per tab in the in-game
+        // editor and decoding the resulting byte pattern:
+        //   Offense → UI 25 → byte 0
+        //   Defense → UI 26 → byte 3
+        //   Athleticism → UI 27 → byte 6
+        //   Mental → UI 28 → byte 9
+        //   Misc → UI 40 → byte 45
+        // Exact linear scaling: byte = (UI - 25) * 3, so byte 0..222 maps to
+        // UI 25..99. The 60-byte block is interleaved (NOT contiguous by tab,
+        // same scattered pattern as the tendency block).
+        //
+        // 23 Offense + 7 Defense + 24 Athleticism + 5 Mental + 1 Misc = 60.
+        public const int PLAYER_STATIC_RATINGS_OFFSET = 0x388;
+        public const int PLAYER_STATIC_RATINGS_LENGTH = 60;
+        public const int PLAYER_STATIC_RATINGS_UI_MIN = 25;
+        public const int PLAYER_STATIC_RATINGS_UI_MAX = 99;
+
         // Sub-buffer (referenced by [player + 0x80])
         public const int PHYS_HEIGHT          = 0x00;     // f32, cm
         public const int PHYS_WINGSPAN        = 0x04;     // f32, cm

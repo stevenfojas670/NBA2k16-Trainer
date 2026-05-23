@@ -120,9 +120,13 @@ namespace NBA2k16_Trainer
 
         // Separate instances so editing a roster player never touches the
         // MyPlayer-resolver tab state. Same I/O code, different snapshots.
+        // Roster/Players Ratings uses StaticRosterRatingsCheat (+0x388, scaled
+        // UI 25..99 -> byte 0..222) NOT RatingsCheat which targets the heap
+        // MyPlayer's +0x3C4 layout (and which in the static roster turned out
+        // to be the tendency block, not ratings).
         private readonly RosterResolver _rosterResolver = new();
         private readonly PlayerProfileCheat _rosterProfileCheat = new();
-        private readonly RatingsCheat _rosterRatingsCheat = new();
+        private readonly StaticRosterRatingsCheat _rosterRatingsCheat = new();
         private readonly BadgesCheat _rosterBadgesCheat = new();
         private readonly TendenciesCheat _rosterTendenciesCheat = new();
 
@@ -176,9 +180,10 @@ namespace NBA2k16_Trainer
 
         // Third independent set of cheats so Players tab tracks its own
         // captured-original state. Mirrors how the Roster tab is isolated
-        // from the MyPlayer tab.
+        // from the MyPlayer tab. Ratings cheat is StaticRosterRatingsCheat
+        // (see comment on _rosterRatingsCheat for why).
         private readonly PlayerProfileCheat _playerListProfileCheat = new();
-        private readonly RatingsCheat _playerListRatingsCheat = new();
+        private readonly StaticRosterRatingsCheat _playerListRatingsCheat = new();
         private readonly BadgesCheat _playerListBadgesCheat = new();
         private readonly TendenciesCheat _playerListTendenciesCheat = new();
 
@@ -878,7 +883,10 @@ namespace NBA2k16_Trainer
             page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
             _rosterRatingOverrideBox = new NumericUpDown
             {
-                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 99, Value = 99,
+                Top = 8, Left = 115, Width = 70,
+                Minimum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
+                Maximum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
+                Value = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
             };
             page.Controls.Add(_rosterRatingOverrideBox);
 
@@ -901,9 +909,13 @@ namespace NBA2k16_Trainer
             };
             page.Controls.Add(scroll);
 
-            var groups = RatingsCheat.Ratings
-                .GroupBy(r => r.Group)
-                .OrderBy(g => g.Key)
+            // Preserve first-occurrence order so tabs appear in the same
+            // order the in-game editor uses (Offense first).
+            var groups = StaticRosterRatingsCheat.StaticRatings
+                .Select((r, i) => new { r, i })
+                .GroupBy(x => x.r.Group)
+                .OrderBy(g => g.First().i)
+                .Select(g => new { Key = g.Key, Items = g.Select(x => x.r).ToList() })
                 .ToList();
 
             int top = 4;
@@ -911,7 +923,7 @@ namespace NBA2k16_Trainer
             {
                 var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
                 int innerTop = 22;
-                foreach (var r in grp)
+                foreach (var r in grp.Items)
                 {
                     gb.Controls.Add(new Label
                     {
@@ -920,7 +932,9 @@ namespace NBA2k16_Trainer
                     var num = new NumericUpDown
                     {
                         Top = innerTop, Left = 252, Width = 70,
-                        Minimum = 0, Maximum = 99, Value = 0,
+                        Minimum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
+                        Maximum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
+                        Value = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
                     };
                     _rosterRatingBoxes[r.Name] = num;
                     gb.Controls.Add(num);
@@ -1260,7 +1274,10 @@ namespace NBA2k16_Trainer
             page.Controls.Add(new Label { Text = "Override all to:", Top = 12, Left = 8, Width = 100 });
             _playerListRatingOverrideBox = new NumericUpDown
             {
-                Top = 8, Left = 115, Width = 70, Minimum = 0, Maximum = 99, Value = 99,
+                Top = 8, Left = 115, Width = 70,
+                Minimum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
+                Maximum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
+                Value = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
             };
             page.Controls.Add(_playerListRatingOverrideBox);
 
@@ -1283,9 +1300,11 @@ namespace NBA2k16_Trainer
             };
             page.Controls.Add(scroll);
 
-            var groups = RatingsCheat.Ratings
-                .GroupBy(r => r.Group)
-                .OrderBy(g => g.Key)
+            var groups = StaticRosterRatingsCheat.StaticRatings
+                .Select((r, i) => new { r, i })
+                .GroupBy(x => x.r.Group)
+                .OrderBy(g => g.First().i)
+                .Select(g => new { Key = g.Key, Items = g.Select(x => x.r).ToList() })
                 .ToList();
 
             int top = 4;
@@ -1293,7 +1312,7 @@ namespace NBA2k16_Trainer
             {
                 var gb = new GroupBox { Text = grp.Key, Top = top, Left = 4, Width = 436 };
                 int innerTop = 22;
-                foreach (var r in grp)
+                foreach (var r in grp.Items)
                 {
                     gb.Controls.Add(new Label
                     {
@@ -1302,7 +1321,9 @@ namespace NBA2k16_Trainer
                     var num = new NumericUpDown
                     {
                         Top = innerTop, Left = 252, Width = 70,
-                        Minimum = 0, Maximum = 99, Value = 0,
+                        Minimum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
+                        Maximum = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX,
+                        Value = GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
                     };
                     _playerListRatingBoxes[r.Name] = num;
                     gb.Controls.Add(num);
@@ -2596,9 +2617,9 @@ namespace NBA2k16_Trainer
         private bool RevertPlayerToBaseline(
             int rosterIndex,
             PlayerProfileCheat profileCheat,
-            RatingsCheat ratingsCheat,
-            BadgesCheat badgesCheat,
-            TendenciesCheat tendenciesCheat,
+            PlayerCheatBase<Dictionary<string, byte>> ratingsCheat,
+            PlayerCheatBase<Dictionary<string, byte>> badgesCheat,
+            PlayerCheatBase<Dictionary<string, byte>> tendenciesCheat,
             Action<PlayerProfileSnapshot> populateProfile,
             Action<Dictionary<string, byte>> populateRatings,
             Action<Dictionary<string, byte>> populateBadges,

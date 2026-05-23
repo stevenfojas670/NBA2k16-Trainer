@@ -325,4 +325,146 @@ namespace NBA2k16_Trainer
             new Dictionary<string, byte>(value);
     }
 
+    /// <summary>
+    /// Reads/writes the 60 static-roster ratings (NBA AI players' shoot/drive/
+    /// pass/defense capabilities). Verified 2026-05-23 against Westbrook by
+    /// bulk-edit per-tab in the in-game roster editor.
+    ///
+    /// On the wire each rating is a single byte 0..222 representing UI value
+    /// 25..99 via the linear map byte = (UI - 25) * 3. The cheat exposes UI
+    /// values directly in its Dictionary snapshot — Form.cs binds those to
+    /// NumericUpDowns ranged [25, 99]. The byte-vs-UI conversion lives inside
+    /// Read/Write so callers never see raw 0..222 bytes.
+    ///
+    /// Distinct from <see cref="RatingsCheat"/>: that one was originally aimed
+    /// at the heap MyPlayer (which has a documented different layout at
+    /// +0x3C4); on the static roster +0x3C4 turned out to be the tendency
+    /// block, not ratings. Roster/Players tabs now use this cheat instead.
+    ///
+    /// Names below are mostly placeholders ("Offense #5") because we know the
+    /// 5 tabs and per-tab counts but not the individual slider names within
+    /// each tab. The Offset and Group are correct; rename the Name field as
+    /// each slider is identified in the in-game editor.
+    /// </summary>
+    internal sealed class StaticRosterRatingsCheat : PlayerCheatBase<Dictionary<string, byte>>
+    {
+        // Offsets are relative to PlayerStructIO.StaticRatingsBase(p) =
+        // playerBase + 0x388. Tab assignment derived from the 2026-05-23
+        // bulk-edit pass on Westbrook in the in-game roster editor. Names
+        // for offsets 0x00..0x2B (44 of 60) come from the existing
+        // RatingsCheat table whose CT-verified offsets matched our diff
+        // 1-to-1; "Reaction Time" at 0x29 added (new in 2K16 per
+        // community references). Offsets 0x2C..0x3B (the 16 entries
+        // labeled "Athleticism #9..#24") are still unverified — they
+        // reacted to the user's Athleticism-tab bulk edit but the visible
+        // Athleticism slider count is typically 8, so these may actually
+        // be body-part durabilities, advanced movement sub-attributes, or
+        // hot-zone slots that the editor cascades together. Rename here
+        // as each is identified in the editor.
+        public static readonly RatingDef[] StaticRatings = new[]
+        {
+            // === Tab: Offense (23) ===
+            new RatingDef("Standing Layup",          0x00, "Offense"),
+            new RatingDef("Driving Layup",           0x01, "Offense"),
+            new RatingDef("Post Fadeaway",           0x02, "Offense"),
+            new RatingDef("Post Hook",               0x03, "Offense"),
+            new RatingDef("Post Control",            0x04, "Offense"),
+            new RatingDef("Draw Foul",               0x05, "Offense"),
+            new RatingDef("Moving Shot Close",       0x06, "Offense"),
+            new RatingDef("Standing Shot Close",     0x07, "Offense"),
+            new RatingDef("Moving Shot Mid-Range",   0x08, "Offense"),
+            new RatingDef("Standing Shot Mid-Range", 0x09, "Offense"),
+            new RatingDef("Moving Shot 3PT",         0x0A, "Offense"),
+            new RatingDef("Standing Shot 3PT",       0x0B, "Offense"),
+            new RatingDef("Free Throw",              0x0C, "Offense"),
+            new RatingDef("Ball Control",            0x0D, "Offense"),
+            new RatingDef("Passing Vision",          0x0E, "Offense"),
+            new RatingDef("Passing IQ",              0x0F, "Offense"),
+            new RatingDef("Passing Accuracy",        0x10, "Offense"),
+            new RatingDef("Offensive Rebound",       0x12, "Offense"),
+            new RatingDef("Standing Dunk",           0x1E, "Offense"),
+            new RatingDef("Driving Dunk",            0x1F, "Offense"),
+            new RatingDef("Contact Dunk",            0x20, "Offense"),
+            new RatingDef("Shot IQ",                 0x27, "Offense"),
+            new RatingDef("Hands",                   0x28, "Offense"),
+
+            // === Tab: Defense (7) ===
+            new RatingDef("Defensive Rebound",       0x13, "Defense"),
+            new RatingDef("Block",                   0x16, "Defense"),
+            new RatingDef("Shot Contest",            0x17, "Defense"),
+            new RatingDef("Steal",                   0x18, "Defense"),
+            new RatingDef("On-Ball Defense IQ",      0x1A, "Defense"),
+            new RatingDef("Low Post Defense IQ",     0x1D, "Defense"),
+            new RatingDef("Reaction Time",           0x29, "Defense"),
+
+            // === Tab: Athleticism (24 — first 8 confirmed, last 16 TBD) ===
+            new RatingDef("Boxout",                  0x11, "Athleticism"),
+            new RatingDef("Lateral Quickness",       0x14, "Athleticism"),
+            new RatingDef("Speed",                   0x21, "Athleticism"),
+            new RatingDef("Acceleration",            0x22, "Athleticism"),
+            new RatingDef("Vertical",                0x23, "Athleticism"),
+            new RatingDef("Strength",                0x24, "Athleticism"),
+            new RatingDef("Stamina",                 0x25, "Athleticism"),
+            new RatingDef("Hustle",                  0x26, "Athleticism"),
+            new RatingDef("Athleticism #9",          0x2C, "Athleticism"),
+            new RatingDef("Athleticism #10",         0x2D, "Athleticism"),
+            new RatingDef("Athleticism #11",         0x2E, "Athleticism"),
+            new RatingDef("Athleticism #12",         0x2F, "Athleticism"),
+            new RatingDef("Athleticism #13",         0x30, "Athleticism"),
+            new RatingDef("Athleticism #14",         0x31, "Athleticism"),
+            new RatingDef("Athleticism #15",         0x32, "Athleticism"),
+            new RatingDef("Athleticism #16",         0x33, "Athleticism"),
+            new RatingDef("Athleticism #17",         0x34, "Athleticism"),
+            new RatingDef("Athleticism #18",         0x35, "Athleticism"),
+            new RatingDef("Athleticism #19",         0x36, "Athleticism"),
+            new RatingDef("Athleticism #20",         0x37, "Athleticism"),
+            new RatingDef("Athleticism #21",         0x38, "Athleticism"),
+            new RatingDef("Athleticism #22",         0x39, "Athleticism"),
+            new RatingDef("Athleticism #23",         0x3A, "Athleticism"),
+            new RatingDef("Athleticism #24",         0x3B, "Athleticism"),
+
+            // === Tab: Mental (5) ===
+            new RatingDef("Pass Perception",         0x15, "Mental"),
+            new RatingDef("Defensive Consistency",   0x19, "Mental"),
+            new RatingDef("Pick & Roll Defense IQ",  0x1B, "Mental"),
+            new RatingDef("Help Defense IQ",         0x1C, "Mental"),
+            new RatingDef("Offensive Consistency",   0x2A, "Mental"),
+
+            // === Tab: Misc (1) ===
+            new RatingDef("Potential",               0x2B, "Misc"),
+        };
+
+        public override Dictionary<string, byte> Read(ProcessSession s, IntPtr p)
+        {
+            IntPtr ratingBase = PlayerStructIO.StaticRatingsBase(p);
+            var dict = new Dictionary<string, byte>(StaticRatings.Length);
+            foreach (var r in StaticRatings)
+            {
+                byte raw = s.ReadByte(new IntPtr(ratingBase.ToInt64() + r.Offset));
+                // byte 0..222 -> UI 25..99
+                int ui = (raw / 3) + GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN;
+                if (ui > GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX) ui = GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX;
+                dict[r.Name] = (byte)ui;
+            }
+            return dict;
+        }
+
+        protected override void Write(ProcessSession s, IntPtr p, Dictionary<string, byte> values)
+        {
+            IntPtr ratingBase = PlayerStructIO.StaticRatingsBase(p);
+            foreach (var r in StaticRatings)
+            {
+                if (!values.TryGetValue(r.Name, out byte ui)) continue;
+                int clampedUi = Math.Clamp((int)ui,
+                    GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN,
+                    GameOffsets.PLAYER_STATIC_RATINGS_UI_MAX);
+                int raw = (clampedUi - GameOffsets.PLAYER_STATIC_RATINGS_UI_MIN) * 3;
+                s.WriteByte(new IntPtr(ratingBase.ToInt64() + r.Offset), (byte)raw);
+            }
+        }
+
+        protected override Dictionary<string, byte> Clone(Dictionary<string, byte> value) =>
+            new Dictionary<string, byte>(value);
+    }
+
 }
